@@ -1,0 +1,19 @@
+node_modules
+dist
+.next
+.env
+*.log
+.DS_Store
+.turbo
+coverage
+prisma/migrations
+packages/server/prisma/dev.db
+packages/server/prisma/dev.db-journal
+
+# Release artifacts
+release/*.tar.gz
+release/binary/
+*.tar.gz
+claudecodeui/
+for_debug/
+.idea/

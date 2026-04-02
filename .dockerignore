@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Dependencies (reinstalled in image)
+node_modules
+**/node_modules
+.pnpm-store
+
+# Build outputs (rebuilt in image)
+**/dist
+**/.turbo
+**/.next
+
+# Dev / test
+**/*.test.ts
+**/__tests__
+**/tests
+**/coverage
+*.log
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+*.md
+!README.md
+
+# Docker (avoid recursive copy)
+**/Dockerfile*
+**/docker-compose*
+**/.docker
+
+# Agent 仅复制 package.json + scripts（满足 workspace 与 postinstall）
+packages/agent/*
+!packages/agent/package.json
+!packages/agent/scripts
+!packages/agent/scripts/**
+
+# Docs (optional, keep repo smaller)
+docs

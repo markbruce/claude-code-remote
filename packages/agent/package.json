@@ -1,0 +1,31 @@
+{
+  "name": "cc-remote-agent",
+  "version": "1.0.14",
+  "bin": {
+    "cc-agent": "./dist/index.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-node-pty.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "debug-session": "node scripts/debug-session-messages.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.71",
+    "cc-remote-shared": "workspace:*",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "inquirer": "^8.2.6",
+    "node-pty": "^1.0.0",
+    "ora": "^5.4.1",
+    "simple-git": "^3.27.0",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.14.10",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.7.3"
+  }
+}

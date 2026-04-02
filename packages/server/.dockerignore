@@ -1,0 +1,47 @@
+# Dependencies
+**/node_modules
+.pnpm-store
+
+# Build outputs (will be built in Docker)
+**/dist
+**/.turbo
+
+# Keep necessary config files
+!tsconfig.base.json
+!**/tsconfig.json
+
+# Development files
+*.log
+**/.env
+**/.env.*
+!**/.env.example
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+**/coverage
+**/*.test.ts
+**/__tests__/**
+**/tests
+
+# Git
+.git
+.gitignore
+
+# Docker
+**/Dockerfile*
+**/docker-compose*
+**/.docker
+
+# Misc
+**/*.md
+**/docs
+**/output.txt

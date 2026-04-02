@@ -1,0 +1,81 @@
+// Prisma Schema for Claude Code Remote
+// Database: SQLite (单文件，零配置)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-1.1.x", "linux-arm64-openssl-3.0.x", "linux-musl", "darwin-arm64"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL") // 默认: file:./dev.db
+}
+
+// 用户表
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  password_hash String     @map("password_hash")
+  username      String?
+  created_at    DateTime   @default(now()) @map("created_at")
+
+  // 关系
+  machines      Machine[]
+
+  @@map("users")
+}
+
+// PC机器表
+model Machine {
+  id                 String       @id @default(uuid())
+  user_id            String       @map("user_id")
+  name               String       // 用户自定义名称，如"办公室PC"
+  hostname           String       // Agent上报的实际主机名
+  machine_token_hash String       @map("machine_token_hash") // bcrypt哈希，明文永不存储
+  last_seen          DateTime?    @map("last_seen") // 最后心跳时间
+  created_at         DateTime     @default(now()) @map("created_at")
+
+  // 关系
+  user               User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  projects           Project[]
+  sessions           SessionLog[]
+
+  @@index([user_id])
+  @@map("machines")
+}
+
+// 工程记录表（缓存快照）
+model Project {
+  id             String    @id @default(uuid())
+  machine_id     String    @map("machine_id")
+  path           String    // 工程绝对路径
+  name           String    // 目录名或用户自定义
+  last_accessed  DateTime? @map("last_accessed")
+  last_scanned   DateTime  @default(now()) @map("last_scanned")
+
+  // 关系
+  machine        Machine   @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+  sessions       SessionLog[]
+
+  @@unique([machine_id, path])
+  @@index([machine_id])
+  @@map("projects")
+}
+
+// 会话历史记录表（轻量元数据）
+model SessionLog {
+  id               String    @id @default(uuid())
+  machine_id       String    @map("machine_id")
+  project_id       String?   @map("project_id") // 可为空（手动路径启动时）
+  started_at       DateTime  @default(now()) @map("started_at")
+  ended_at         DateTime? @map("ended_at") // null 表示进行中
+  duration_seconds Int?      @map("duration_seconds")
+
+  // 关系
+  machine          Machine   @relation(fields: [machine_id], references: [id], onDelete: Cascade)
+  project          Project?  @relation(fields: [project_id], references: [id], onDelete: SetNull)
+
+  @@index([machine_id])
+  @@index([project_id])
+  @@map("session_logs")
+}

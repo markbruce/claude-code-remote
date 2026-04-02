@@ -1,0 +1,28 @@
+{
+  "name": "@cc-remote/agent",
+  "version": "1.0.0",
+  "description": "Claude Code Remote Agent - PC端守护进程",
+  "bin": {
+    "cc-agent": "./dist/index.js"
+  },
+  "pkg": {
+    "targets": [
+      "node18-linux-x64",
+      "node18-macos-x64",
+      "node18-win-x64"
+    ],
+    "outputPath": "../../release/binary",
+    "assets": [
+      "node_modules/**/*",
+      "dist/**/*"
+    ],
+    "scripts": [
+      "dist/**/*.js"
+    ]
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:binary": "pkg . --compress GZip",
+    "start": "node dist/index.js"
+  }
+}

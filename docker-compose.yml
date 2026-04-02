@@ -1,0 +1,33 @@
+# CC-Remote Server + Web 一键运行
+# 构建：docker compose build
+# 运行：docker compose up -d
+# 日志：docker compose logs -f
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    image: cc-remote:latest
+    container_name: cc-remote
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: file:/app/data/cc-remote.db
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+    volumes:
+      - cc-remote-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  cc-remote-data:
