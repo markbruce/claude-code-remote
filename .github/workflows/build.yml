@@ -120,7 +120,7 @@ jobs:
         run: bash scripts/pack-agent-standalone-tgz.sh
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: cc-agent-${{ github.ref_name }}
           path: release/
@@ -223,7 +223,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download agent artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: cc-agent-${{ github.ref_name }}
           path: release/
