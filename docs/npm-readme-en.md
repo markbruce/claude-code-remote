@@ -6,15 +6,16 @@
 
 `cc-remote-agent` is the PC daemon for the Claude Code Remote project. It runs on the computer you want to control remotely, connects to the cloud server via WebSocket, and executes commands received from web clients.
 
-## v1.1.1 Release Notes
+## v1.1.2 Release Notes
 
 bugfix:
-1. Fixed large repository git status response overflow causing socket disconnection
-2. `cc-agent --version` now reads version dynamically from package.json
+1. Fixed deprecated `actions/upload-artifact@v3` and `actions/download-artifact@v3` in CI workflow (updated to v4)
+2. Fixed GitHub Release creation failure — added `contents: write` permission to workflow
+3. Cleaned up publish-npm job — removed debug steps and version override hack
 
 ---
 
-## v1.1.0 Release Notes
+## v1.1.1 Release Notes
 
 feature:
 1. Internationalization (i18n) support — Chinese/English bilingual UI

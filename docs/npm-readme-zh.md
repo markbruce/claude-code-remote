@@ -6,15 +6,16 @@
 
 `cc-remote-agent` 是 Claude Code Remote 项目的 PC 端守护进程。它运行在你需要远程控制的电脑上，通过 WebSocket 连接到云端 Server，接收来自 Web 客户端的指令并执行。
 
-## v1.1.1 Release Notes
+## v1.1.2 Release Notes
 
 bugfix:
-1. 修复大仓库 git status 响应过大导致 socket 断连
-2. `cc-agent --version` 从 package.json 动态读取版本号
+1. 修复 CI 工作流中已废弃的 `actions/upload-artifact@v3` 和 `actions/download-artifact@v3`（更新至 v4）
+2. 修复 GitHub Release 创建失败 — 添加 `contents: write` 权限
+3. 清理 publish-npm 任务 — 移除调试步骤和版本覆盖 hack
 
 ---
 
-## v1.1.0 Release Notes
+## v1.1.1 Release Notes
 
 feature:
 1. 国际化 (i18n) 支持 - 中英文双语切换

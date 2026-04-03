@@ -1,6 +1,6 @@
 {
   "name": "@cc-remote/server",
-  "version": "1.0.14",
+  "version": "1.1.2",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

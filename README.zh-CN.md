@@ -18,7 +18,16 @@
 
 Claude Code Remote 是一个轻量级的远程开发工具，让你能够从手机、平板或任意电脑访问和管理本地 PC 上的 Claude Code 会话。专为没有官方订阅的小团队设计，使用自己的算力和 API 实现远程 vibe coding。
 
-## 🆕 v1.1.1 Release Notes
+## 🆕 v1.1.2 Release Notes
+
+bugfix:
+1. 修复 CI 工作流中已废弃的 `actions/upload-artifact@v3` 和 `actions/download-artifact@v3`（更新至 v4）
+2. 修复 GitHub Release 创建失败 — 添加 `contents: write` 权限
+3. 清理 publish-npm 任务 — 移除调试步骤和版本覆盖 hack
+
+---
+
+## v1.1.1 Release Notes
 
 bugfix:
 1. 修复大仓库 git status 响应过大导致 socket 断连

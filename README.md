@@ -18,7 +18,16 @@
 
 Claude Code Remote is a lightweight remote development tool that lets you access and manage Claude Code sessions on your local PC from your phone, tablet, or any browser. Designed for small teams without official Claude subscriptions, using your own compute and API key for remote vibe coding.
 
-## 🆕 v1.1.1 Release Notes
+## 🆕 v1.1.2 Release Notes
+
+bugfix:
+1. Fixed deprecated `actions/upload-artifact@v3` and `actions/download-artifact@v3` in CI workflow (updated to v4)
+2. Fixed GitHub Release creation failure — added `contents: write` permission to workflow
+3. Cleaned up publish-npm job — removed debug steps and version override hack
+
+---
+
+## v1.1.1 Release Notes
 
 bugfix:
 1. Fixed large repository git status response overflow causing socket disconnection

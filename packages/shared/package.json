@@ -1,6 +1,6 @@
 {
   "name": "cc-remote-shared",
-  "version": "1.0.14",
+  "version": "1.1.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
