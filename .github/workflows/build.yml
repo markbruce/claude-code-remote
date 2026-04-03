@@ -154,12 +154,11 @@ jobs:
       - name: Build shared and agent
         run: pnpm run build:agent
 
-      - name: Setup npm auth
-        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-
       - name: Publish to npm
         run: |
           pnpm --filter cc-remote-agent publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # 创建 GitHub Release (仅在打tag时)
   create-release:
