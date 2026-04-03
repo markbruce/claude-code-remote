@@ -151,70 +151,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Set version from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          node -e "
-            const fs=require('fs');
-            for (const p of ['packages/shared/package.json','packages/agent/package.json']) {
-              const j=JSON.parse(fs.readFileSync(p,'utf8'));
-              j.version='$VERSION';
-              fs.writeFileSync(p, JSON.stringify(j,null,2));
-            }
-          "
-          echo "Publishing version: $VERSION"
-
       - name: Build shared and agent
         run: pnpm run build:agent
 
-      - name: Debug NPM token (safe)
-        run: |
-          TOKEN="${{ secrets.NPM_TOKEN }}"
-          echo "NPM_TOKEN length: ${#TOKEN}"
-          echo "NPM_TOKEN prefix: ${TOKEN:0:6}"
-          echo "NPM_TOKEN suffix: ${TOKEN: -4}"
-
-      - name: Debug npm env
-        run: |
-          echo "===== npm config list ====="
-          npm config list
-
-          echo "===== registry ====="
-          npm config get registry
-
-          echo "===== npmrc locations ====="
-          npm config get userconfig
-          npm config get globalconfig
-
-          echo "===== ~/.npmrc ====="
-          cat ~/.npmrc || true
-
-          echo "===== project .npmrc ====="
-          cat .npmrc || true
-      - name: Check npm identity - debug way
-        run: |
-          echo "registry=https://registry.npmjs.org/"                         > .npmrc
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}"   >> .npmrc
-          echo "always-auth=true"                                            >> .npmrc
-
-          echo "—— .npmrc content ——"
-          cat .npmrc
-          echo "——"
-
-          npm config list
-          npm whoami --registry=https://registry.npmjs.org/
-      - name: Check npm identity
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-          npm whoami
+      - name: Setup npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
 
       - name: Publish to npm
         run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
           pnpm --filter cc-remote-shared publish --access public --no-git-checks
           pnpm --filter cc-remote-agent publish --access public --no-git-checks
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # 创建 GitHub Release (仅在打tag时)
   create-release:
