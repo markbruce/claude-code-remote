@@ -159,7 +159,6 @@ jobs:
 
       - name: Publish to npm
         run: |
-          pnpm --filter cc-remote-shared publish --access public --no-git-checks
           pnpm --filter cc-remote-agent publish --access public --no-git-checks
 
   # 创建 GitHub Release (仅在打tag时)
