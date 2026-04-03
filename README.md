@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
+[![npm version](https://img.shields.io/npm/v/cc-remote-agent?logo=npm&label=npm)](https://www.npmjs.com/package/cc-remote-agent)
+[![Docker Pulls](https://img.shields.io/docker/pulls/zhangthexiaoning/cc-remote-server?logo=docker&label=docker%20pulls)](https://hub.docker.com/r/zhangthexiaoning/cc-remote-server)
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Deployment](DEPLOY.md) • [Architecture](#-architecture) • [Acknowledgements](#-acknowledgements) • [中文文档](README.zh-CN.md)
 
