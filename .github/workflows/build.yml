@@ -13,6 +13,9 @@ env:
   IMAGE_NAME_SERVER: zhangthexiaoning/cc-remote-server
   IMAGE_NAME_AGENT: zhangthexiaoning/cc-remote-agent
 
+permissions:
+  contents: write
+
 jobs:
   # PR 轻量验证：不启动 Docker，只验证 install + build
   validate:
