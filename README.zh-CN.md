@@ -20,6 +20,43 @@
 
 Claude Code Remote 是一个轻量级的远程开发工具，让你能够从手机、平板或任意电脑访问和管理本地 PC 上的 Claude Code 会话。专为没有官方订阅的小团队设计，使用自己的算力和 API 实现远程 vibe coding。
 
+## 📸 截图预览
+
+<table>
+  <tr>
+    <td align="center"><b>登录页面</b></td>
+    <td align="center"><b>机器列表</b></td>
+    <td align="center"><b>机器搜索</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/prev_imgs/login.png" width="250"/></td>
+    <td><img src="docs/prev_imgs/machine_list.png" width="250"/></td>
+    <td><img src="docs/prev_imgs/machine_search.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>项目列表</b></td>
+    <td align="center"><b>对话模式</b></td>
+    <td align="center"><b>终端模式</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/prev_imgs/project_list.png" width="250"/></td>
+    <td><img src="docs/prev_imgs/main_chat.png" width="250"/></td>
+    <td><img src="docs/prev_imgs/main_terminal.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Git 历史</b></td>
+    <td></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td><img src="docs/prev_imgs/main_history.png" width="250"/></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>
+
+---
+
 ## 🆕 v1.1.2 Release Notes
 
 bugfix:

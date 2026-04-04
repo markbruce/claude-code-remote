@@ -6,6 +6,43 @@
 
 `cc-remote-agent` 是 Claude Code Remote 项目的 PC 端守护进程。它运行在你需要远程控制的电脑上，通过 WebSocket 连接到云端 Server，接收来自 Web 客户端的指令并执行。
 
+## 截图预览
+
+<table>
+  <tr>
+    <td align="center"><b>登录页面</b></td>
+    <td align="center"><b>机器列表</b></td>
+    <td align="center"><b>机器搜索</b></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/login.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/machine_list.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/machine_search.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>项目列表</b></td>
+    <td align="center"><b>对话模式</b></td>
+    <td align="center"><b>终端模式</b></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/project_list.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_chat.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_terminal.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>会话历史</b></td>
+    <td></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_history.png" width="250"/></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>
+
+---
+
 ## v1.1.2 Release Notes
 
 bugfix:

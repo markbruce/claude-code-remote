@@ -6,6 +6,43 @@
 
 `cc-remote-agent` is the PC daemon for the Claude Code Remote project. It runs on the computer you want to control remotely, connects to the cloud server via WebSocket, and executes commands received from web clients.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Login</b></td>
+    <td align="center"><b>Machine List</b></td>
+    <td align="center"><b>Machine Search</b></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/login.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/machine_list.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/machine_search.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Project List</b></td>
+    <td align="center"><b>Chat Mode</b></td>
+    <td align="center"><b>Terminal Mode</b></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/project_list.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_chat.png" width="250"/></td>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_terminal.png" width="250"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Session History</b></td>
+    <td></td>
+    <td></td>
+  </tr>
+  <tr>
+    <td><img src="https://raw.githubusercontent.com/markbruce/claude-code-remote/main/docs/prev_imgs/main_history.png" width="250"/></td>
+    <td></td>
+    <td></td>
+  </tr>
+</table>
+
+---
+
 ## v1.1.2 Release Notes
 
 bugfix:
