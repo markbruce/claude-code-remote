@@ -302,7 +302,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             placeholder={isGenerating ? t('chat.claudeReplying') : t('chat.sendPlaceholder')}
             disabled={disabled}
             rows={1}
-            className="w-full resize-none bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg px-4 py-2.5 text-sm placeholder-gray-400 dark:placeholder-gray-500 outline-none border border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400 focus:bg-white dark:focus:bg-gray-700 transition-colors disabled:opacity-50"
+            className="w-full resize-none bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg px-4 py-2.5 text-base placeholder-gray-400 dark:placeholder-gray-500 outline-none border border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400 focus:bg-white dark:focus:bg-gray-700 transition-colors disabled:opacity-50"
             style={{ maxHeight: 200 }}
           />
         </div>
