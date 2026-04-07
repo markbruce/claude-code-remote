@@ -497,12 +497,9 @@ export class SdkSession extends EventEmitter {
     this.pendingPermissions.delete(requestId);
 
     if (approved) {
-      // 如果有 updatedInput (例如 AskUserQuestion 的答案)，则将其传递回 SDK
-      if (updatedInput) {
-        resolver({ behavior: 'allow', updatedInput });
-      } else {
-        resolver({ behavior: 'allow' });
-      }
+      // SDK 要求 allow 分支必须包含 updatedInput（Zod schema required 字段）
+      // 参考: https://github.com/anthropics/claude-agent-sdk-python/issues/200
+      resolver({ behavior: 'allow', updatedInput: updatedInput ?? {} });
     } else {
       resolver({ behavior: 'deny', message: message ?? 'User denied this action' });
     }
