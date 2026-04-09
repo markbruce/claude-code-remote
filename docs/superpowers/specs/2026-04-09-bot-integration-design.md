@@ -17,7 +17,7 @@ The server uses Socket.IO with two namespaces (`/agent` for remote machines, `/c
 - Chat mode only (no Shell/terminal emulation)
 - Interactive permission approval for tool calls
 - Session persistence across bot restarts
-- Zero changes to existing server code
+- Minimal server-side changes (Prisma migration + 2 new API routes)
 
 ## Architecture
 
@@ -55,53 +55,76 @@ The server uses Socket.IO with two namespaces (`/agent` for remote machines, `/c
 | User Binding | `core/user-binding.ts` | Telegram user ID → system User binding management |
 | Message Formatter | `core/formatter.ts` | Converts `ChatMessageEvent` types to platform-specific message formats |
 
+## Server-Side Changes
+
+This feature requires minimal additions to the existing server:
+
+1. **Prisma migration**: Add `BotBinding` model to `packages/server/prisma/schema.prisma`
+2. **New route**: Add `POST /api/auth/bind-telegram` to `packages/server/src/routes/auth.routes.ts`
+3. **New route**: Add `POST /api/auth/bot-token` for JWT refresh
+
+No changes to Socket.IO handlers, session logic, or existing routes.
+
 ## User Binding & Authentication
 
 ### Binding Flow
 
 1. User sends `/start` to Bot on Telegram
-2. Bot generates a one-time bind token and returns a deep link to the web app: `https://<server>/bind-telegram?token=<token>`
-3. User logs into the web app (if not already), then visits the bind URL
-4. Web app calls `POST /api/auth/bind-telegram` with the token
-5. Server creates a `BotBinding` record linking the Telegram user to the system user
-6. Bot receives confirmation via polling/callback and notifies the user
+2. Bot generates a one-time bind token (cryptographically random, 32 bytes hex), stores it in memory with a 10-minute TTL
+3. Bot returns a deep link to the web app: `https://<server>/bind-telegram?token=<token>&platform_user_id=<tg_uid>&chat_id=<chat_id>`
+4. User logs into the web app (if not already), then visits the bind URL
+5. Web app calls `POST /api/auth/bind-telegram` with the token, platform_user_id, and chat_id
+6. Server validates the token (by calling back to bot service's `GET /api/bind/verify?token=xxx` endpoint) and creates a `BotBinding` record
+7. Server returns a JWT to the web app, which forwards it to the bot via `POST /api/bind/confirm` (the bot exposes a lightweight HTTP endpoint)
+8. Bot stores the JWT, connects Socket.IO for this user, and notifies the user on Telegram
+
+Rate limit: `/start` is limited to 5 requests per Telegram user per hour.
 
 ### Authentication Model
 
 Each bound user gets their own Socket.IO connection to the server's `/client` namespace:
 
-- On bind, the bot service obtains a JWT for that user (via server API)
+- On bind, the bot receives a JWT and stores it in its SQLite database
 - Bot maintains a `Map<telegramUserId, Socket>` of active connections
 - When a Telegram user sends a message, the bot uses that user's personal Socket.IO connection
 - Server-side auth and permission checks work identically to web client connections
+
+### JWT Refresh
+
+JWTs expire (default 7 days). The bot handles expiry:
+
+- Bot tracks JWT expiry time for each bound user
+- 1 hour before expiry, bot calls `POST /api/auth/bot-token` with the current JWT to get a fresh one
+- If the JWT has already expired, the bot calls `POST /api/auth/bot-token` with a stored refresh secret (issued at bind time) to obtain a new JWT
+- If refresh fails (user deleted, etc.), bot notifies the user and asks them to re-bind
 
 ### Data Model (Prisma addition to server)
 
 ```prisma
 model BotBinding {
-  id               String   @id @default(cuid())
+  id               String   @id @default(uuid())
   user_id          String
   platform         String   // "telegram" | "feishu"
   platform_user_id String   // Telegram user ID or Feishu open_id
   chat_id          String   // Chat/dialog ID for sending messages
+  refresh_secret   String   // For JWT refresh when token expires
   created_at       DateTime @default(now())
 
   user User @relation(fields: [user_id], references: [id])
 
   @@unique([platform, platform_user_id])
+  @@index([user_id])
 }
 ```
-
-**Note**: This schema change goes in `packages/server/prisma/schema.prisma`. The bot service itself uses its own SQLite for session mapping.
 
 ## Session Management
 
 ### User State Machine
 
 ```
-unbound → bound → machine_selected → in_session
-                     ↑                    │
-                     └── session_end ─────┘
+unbound → bound → machine_selected → project_selected → in_session
+                     ↑                                      │
+                     └──────────── session_end ─────────────┘
 ```
 
 ### Commands
@@ -112,9 +135,10 @@ unbound → bound → machine_selected → in_session
 | `/machines` | bound | List online machines for the bound user |
 | `/use <name>` | bound | Select target machine by name |
 | `/projects` | machine_selected | List projects on selected machine |
-| `/chat <message>` | machine_selected | Start or continue a chat session in current project |
+| `/cd <path>` | machine_selected | Select project path (e.g., `/cd /home/user/myproject`) |
+| `/chat <message>` | project_selected | Start or continue a chat session in current project |
 | `/new` | in_session | Start a new session (don't resume previous) |
-| `/history` | machine_selected | List historical sessions |
+| `/history` | project_selected | List historical sessions |
 | `/cancel` | any | Cancel current operation |
 
 ### Session Persistence
@@ -123,17 +147,32 @@ The bot service maintains its own SQLite database:
 
 ```sql
 CREATE TABLE user_sessions (
-  telegram_user_id TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  telegram_user_id TEXT NOT NULL,
   machine_id TEXT NOT NULL,
   machine_name TEXT NOT NULL,
   project_path TEXT NOT NULL,
   session_id TEXT,
-  socket_id TEXT,
+  jwt TEXT NOT NULL,
+  jwt_expires_at DATETIME NOT NULL,
+  refresh_secret TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'project_selected',  -- state machine state
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX idx_user_sessions_telegram ON user_sessions(telegram_user_id);
 ```
 
-On bot restart, the service reads this table and attempts to re-establish Socket.IO connections for active sessions.
+**Known limitation**: One active session per Telegram user at a time. If a user switches machines or projects, the previous session mapping is updated. Users are notified when overwriting an active session.
+
+### Bot Restart Recovery
+
+1. Read all rows from `user_sessions` table
+2. For each row, check if JWT is expired:
+   - If valid: connect Socket.IO, emit `JOIN_SESSION` for the stored `session_id`
+   - If expired: call `POST /api/auth/bot-token` with `refresh_secret` to obtain fresh JWT, then connect
+3. After Socket.IO connects, emit `LIST_SESSIONS` to verify session still exists on agent
+4. If session is gone, notify user and reset state to `project_selected`
 
 ## Permission Approval
 
@@ -150,26 +189,46 @@ Command: npm install express
 [✅ Approve]  [❌ Deny]
 ```
 
-- Uses Telegram Inline Keyboard with callback data encoding `sessionId + requestId`
-- User taps a button → Bot sends `CHAT_PERMISSION_ANSWER` event to agent
+- Uses Telegram Inline Keyboard with short lookup key as callback data (Telegram limits callback data to 64 bytes, so we store `requestId` in bot's memory map and use an incrementing counter as the callback key)
+- User taps a button → Bot looks up the full `requestId` from its memory map → sends `CHAT_PERMISSION_ANSWER` event to agent
 - Optional: auto-approve whitelist configurable per user
 
 ### Feishu (future)
 
 Uses Feishu message card interactive components (buttons with callback action).
 
+## Socket.IO Event Mapping
+
+The bot listens for these specific events on each user's Socket.IO connection:
+
+| Socket Event (from `SocketEvents`) | Direction | Bot Action |
+|-------------------------------------|-----------|-----------|
+| `client:connected` | Server → Bot | Mark user as connected |
+| `machines:list` | Server → Bot | Format machine list for Telegram |
+| `session-started` | Server → Bot | Store session_id, switch to `in_session` state |
+| `chat:message` | Server → Bot | Send as Markdown text message to Telegram |
+| `chat:tool-use` | Server → Bot | Format as labeled code block |
+| `chat:tool-result` | Server → Bot | Format as code block (truncate if long) |
+| `chat:permission-request` | Server → Bot | Send inline keyboard with approve/deny buttons |
+| `chat:complete` | Server → Bot | Send session-ended notice |
+| `chat:error` | Server → Bot | Send warning message |
+| `session-end` | Server → Bot | Reset state to `project_selected`, notify user |
+| `projects:list` | Server → Bot | Format project list for Telegram |
+| `sessions:list` | Server → Bot | Format history sessions list |
+| `error` | Server → Bot | Send error message to Telegram |
+
 ## Message Formatting
 
-### ChatMessageEvent → Telegram
+### Socket Events → Telegram
 
-| Event Type | Format |
-|-----------|--------|
-| `text` | Markdown-formatted text message |
-| `text_delta` | Edit the same message in-place (streaming) |
-| `tool_use` | Labeled code block with tool name |
-| `tool_result` | Collapsible code block; truncate if > 3000 chars with summary |
-| `error` | Warning-prefixed error message |
-| `complete` | Session-ended notice |
+| Socket Event | Format |
+|-------------|--------|
+| `chat:message` (text) | Markdown-formatted text message |
+| `chat:message` (text_delta) | Edit same message in-place, throttled to max 20 edits/min to respect Telegram rate limits |
+| `chat:tool-use` | Labeled code block with tool name |
+| `chat:tool-result` | Code block; truncate if > 3000 chars with summary |
+| `chat:error` | Warning-prefixed error message |
+| `chat:complete` | Session-ended notice |
 
 ### Long Text Handling
 
@@ -185,7 +244,7 @@ Uses Feishu message card interactive components (buttons with callback action).
 | Socket.IO disconnect | Auto-reconnect with exponential backoff; notify user after 3 failures |
 | Server unreachable | Poll health endpoint; cache last known state |
 | Permission timeout (no user response) | Auto-deny after configurable timeout (default 5 min) |
-| Bot restart | Reconnect all bound users, restore sessions from SQLite |
+| Bot restart | Read `user_sessions` from SQLite → refresh JWTs if needed → reconnect Socket.IO → verify session liveness via `LIST_SESSIONS` → notify user of reconnection or reset state |
 
 ## Technology Choices
 
@@ -219,31 +278,56 @@ packages/bot/
 
 ## API Additions (Server Side)
 
-The bot service needs two new server endpoints:
+The bot service requires three new server endpoints:
 
 ### `POST /api/auth/bind-telegram`
 
-Binds a Telegram user to a system user.
+Binds a Telegram user to a system user. Called by the web frontend after the user clicks the bind link.
 
 ```typescript
 // Request
 {
-  token: string;  // one-time bind token
-  telegram_user_id: string;
-  chat_id: string;
+  token: string;              // one-time bind token from bot
+  platform_user_id: string;   // Telegram user ID
+  chat_id: string;            // Telegram chat ID
 }
 
 // Response
 {
   success: true;
-  jwt: string;  // JWT for Socket.IO connection
+  jwt: string;              // JWT for Socket.IO connection
+  refresh_secret: string;   // Long-lived secret for JWT refresh
   user: User;
+}
+```
+
+### `POST /api/auth/bot-token`
+
+Refreshes a JWT for a bot-bound user. Called by the bot service when JWT is about to expire or has expired.
+
+```typescript
+// Request (JWT still valid, just refreshing)
+{
+  jwt: string;  // current JWT
+}
+
+// Request (JWT expired, using refresh secret)
+{
+  platform: string;           // "telegram" | "feishu"
+  platform_user_id: string;
+  refresh_secret: string;
+}
+
+// Response
+{
+  success: true;
+  jwt: string;  // fresh JWT
 }
 ```
 
 ### `POST /api/auth/feishu-bind` (future)
 
-Same pattern for Feishu.
+Same pattern as `bind-telegram` for Feishu.
 
 ## Configuration (Environment Variables)
 
