@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useChatStore } from '../../stores/chatStore';
 import type { SlashCommandItem } from 'cc-remote-shared';
 
 export interface SlashCommand {
@@ -65,6 +66,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const customCommands = useSessionStore((s) => s.customCommands);
   const fetchCommands = useSessionStore((s) => s.fetchCommands);
+  const abortChat = useChatStore((s) => s.abortChat);
   const [commandsFetched, setCommandsFetched] = useState(false);
 
   useEffect(() => {
@@ -170,6 +172,10 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
     setValue('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, [value, disabled, onSend, showMenu, filteredCommands, selectedIdx, selectCommand]);
+
+  const handleAbort = useCallback(() => {
+    abortChat();
+  }, [abortChat]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -306,16 +312,28 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             style={{ maxHeight: 200 }}
           />
         </div>
-        <button
-          onClick={handleSubmit}
-          disabled={!value.trim() || disabled}
-          className="flex-shrink-0 p-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
+        {isGenerating ? (
+          <button
+            onClick={handleAbort}
+            className="flex-shrink-0 p-2.5 rounded-lg bg-red-600 hover:bg-red-700 transition-colors"
+            title="Stop"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={!value.trim() || disabled}
+            className="flex-shrink-0 p-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="max-w-4xl mx-auto mt-1.5 flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">

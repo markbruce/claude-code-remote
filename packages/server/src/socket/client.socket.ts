@@ -480,6 +480,16 @@ export function handleClientConnection(socket: ClientSocket) {
     emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_PERMISSION_ANSWER, data);
   });
 
+  // Chat 模式：转发中断请求（Client -> Agent）
+  socket.on(SocketEvents.CHAT_ABORT, (data: { session_id: string }) => {
+    const sessionInfo = sessions.get(data.session_id);
+    if (!sessionInfo) {
+      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+      return;
+    }
+    emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_ABORT, data);
+  });
+
   // Shell 模式：转发终端 resize（Client -> Agent）
   socket.on(SocketEvents.SESSION_RESIZE, (data: SessionResizeEvent) => {
     const sessionInfo = sessions.get(data.session_id);

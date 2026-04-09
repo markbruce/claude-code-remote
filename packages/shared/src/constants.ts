@@ -29,6 +29,7 @@ export const SocketEvents = {
   CHAT_SEND: 'chat:send',
   CHAT_PERMISSION_REQUEST: 'chat:permission-request',
   CHAT_PERMISSION_ANSWER: 'chat:permission-answer',
+  CHAT_ABORT: 'chat:abort',
 
   // 会话历史
   LIST_SESSIONS: 'list-sessions',

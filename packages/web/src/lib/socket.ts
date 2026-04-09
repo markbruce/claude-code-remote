@@ -461,6 +461,14 @@ class SocketManager {
   }
 
   /**
+   * 中断当前 Chat 查询
+   */
+  abortChat(sessionId: string): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit(SocketEvents.CHAT_ABORT, { session_id: sessionId });
+  }
+
+  /**
    * 回答 Chat 权限请求
    */
   answerChatPermission(
