@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import type { AttachmentRef } from 'cc-remote-shared';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_ATTACHMENTS = 5;
@@ -27,7 +28,7 @@ export interface useFileUploadReturn {
   addFiles: (files: FileList | File[]) => void;
   removeAttachment: (id: string) => void;
   clearAttachments: () => void;
-  uploadAll: (sessionId: string) => Promise<boolean>;
+  uploadAll: (sessionId: string) => Promise<AttachmentRef[]>;
 }
 
 export function useFileUpload(): useFileUploadReturn {
@@ -70,9 +71,9 @@ export function useFileUpload(): useFileUploadReturn {
     setAttachments([]);
   }, [attachments]);
 
-  const uploadAll = useCallback(async (sessionId: string): Promise<boolean> => {
+  const uploadAll = useCallback(async (sessionId: string): Promise<AttachmentRef[]> => {
     const pending = attachments.filter(a => a.status === 'pending' || a.status === 'error');
-    let allSuccess = true;
+    const results: AttachmentRef[] = [];
 
     for (const att of pending) {
       setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, status: 'uploading' as const } : a));
@@ -90,7 +91,6 @@ export function useFileUpload(): useFileUploadReturn {
         if (!response.ok) {
           const err = await response.json().catch(() => ({ error: 'Upload failed' }));
           setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, status: 'error' as const, error: err.error } : a));
-          allSuccess = false;
           continue;
         }
 
@@ -101,13 +101,20 @@ export function useFileUpload(): useFileUploadReturn {
           fileId: result.fileId,
           signedUrl: result.signedUrl,
         } : a));
+
+        results.push({
+          fileId: result.fileId,
+          signedUrl: result.signedUrl,
+          filename: att.file.name,
+          mimeType: att.file.type,
+          size: att.file.size,
+        });
       } catch {
         setAttachments(prev => prev.map(a => a.id === att.id ? { ...a, status: 'error' as const, error: 'Network error' } : a));
-        allSuccess = false;
       }
     }
 
-    return allSuccess;
+    return results;
   }, [attachments]);
 
   return { attachments, addFiles, removeAttachment, clearAttachments, uploadAll };
