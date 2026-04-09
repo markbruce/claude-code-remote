@@ -6,6 +6,7 @@
 import { Router, Response, Request } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import crypto from 'crypto';
 import {
   HTTP_STATUS,
   ERROR_MESSAGES,
@@ -16,8 +17,10 @@ import {
 } from 'cc-remote-shared';
 import {
   generateToken,
+  verifyToken,
   hashPassword,
-  verifyPassword
+  verifyPassword,
+  authMiddleware
 } from '../auth';
 
 const router: Router = Router();
@@ -227,6 +230,235 @@ router.get('/me', async (req, res: Response) => {
     res.status(HTTP_STATUS.INTERNAL_ERROR).json({
       error: '获取用户信息失败',
       message: '服务器内部错误'
+    });
+  }
+});
+
+/**
+ * POST /api/auth/bind-telegram
+ * 绑定Telegram账号到当前用户
+ */
+router.post('/bind-telegram', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    // 验证请求体
+    const bindSchema = z.object({
+      token: z.string().min(1, '缺少bind token'),
+      platform_user_id: z.string().min(1, '缺少platform_user_id'),
+      chat_id: z.string().min(1, '缺少chat_id'),
+    });
+    const validationResult = bindSchema.safeParse(req.body);
+    if (!validationResult.success) {
+      res.status(HTTP_STATUS.BAD_REQUEST).json({
+        error: ERROR_MESSAGES.INVALID_INPUT,
+        details: validationResult.error.errors,
+      });
+      return;
+    }
+
+    const { token, platform_user_id, chat_id } = validationResult.data;
+    const userId = req.user!.id;
+
+    // 验证bind token：调用Bot服务的verify接口
+    const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:3001';
+    try {
+      const verifyRes = await fetch(
+        `${BOT_SERVICE_URL}/api/bind/verify?token=${encodeURIComponent(token)}`
+      );
+      if (!verifyRes.ok) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: '绑定失败',
+          message: 'Bind token验证失败',
+        });
+        return;
+      }
+    } catch (err) {
+      // 开发模式下如果Bot服务不可达，跳过验证
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[Auth] Bot service unreachable during bind verification:', err);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+          error: '绑定失败',
+          message: 'Bot服务不可达',
+        });
+        return;
+      }
+      console.warn('[Auth] Bot service unreachable, skipping bind token verification (dev mode)');
+    }
+
+    // 生成refresh_secret
+    const refresh_secret = crypto.randomBytes(32).toString('hex');
+
+    // Upsert BotBinding（唯一约束：platform + platform_user_id）
+    await prisma.botBinding.upsert({
+      where: {
+        platform_platform_user_id: {
+          platform: 'telegram',
+          platform_user_id,
+        },
+      },
+      update: {
+        user_id: userId,
+        chat_id,
+        refresh_secret,
+      },
+      create: {
+        user_id: userId,
+        platform: 'telegram',
+        platform_user_id,
+        chat_id,
+        refresh_secret,
+      },
+    });
+
+    // 获取用户信息并生成JWT
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      res.status(HTTP_STATUS.NOT_FOUND).json({
+        error: '用户不存在',
+      });
+      return;
+    }
+
+    const jwt = generateToken({
+      userId: user.id,
+      email: user.email,
+    });
+
+    console.log(`[Auth] Telegram bound for user: ${user.email}, platform_user_id: ${platform_user_id}`);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      jwt,
+      refresh_secret,
+      user: formatUserResponse(user),
+    });
+  } catch (error) {
+    console.error('[Auth] Bind telegram error:', error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      error: '绑定失败',
+      message: '服务器内部错误',
+    });
+  }
+});
+
+/**
+ * POST /api/auth/bot-token
+ * Bot服务刷新JWT（无需认证中间件）
+ */
+router.post('/bot-token', async (req: Request, res: Response) => {
+  try {
+    const { jwt, platform, platform_user_id, refresh_secret } = req.body as {
+      jwt?: string;
+      platform?: string;
+      platform_user_id?: string;
+      refresh_secret?: string;
+    };
+
+    // 路径1：提供有效的JWT，直接刷新
+    if (jwt) {
+      const payload = verifyToken(jwt);
+      if (payload) {
+        // 验证用户仍存在
+        const user = await prisma.user.findUnique({
+          where: { id: payload.userId },
+        });
+        if (!user) {
+          res.status(HTTP_STATUS.UNAUTHORIZED).json({
+            error: ERROR_MESSAGES.UNAUTHORIZED,
+            message: '用户不存在',
+          });
+          return;
+        }
+
+        const newJwt = generateToken({
+          userId: user.id,
+          email: user.email,
+        });
+
+        res.status(HTTP_STATUS.OK).json({
+          success: true,
+          jwt: newJwt,
+        });
+        return;
+      }
+
+      // JWT无效/过期，但没提供refresh_secret，无法刷新
+      if (!platform || !platform_user_id || !refresh_secret) {
+        res.status(HTTP_STATUS.UNAUTHORIZED).json({
+          error: ERROR_MESSAGES.INVALID_TOKEN,
+          message: 'JWT已过期，请使用refresh_secret刷新',
+        });
+        return;
+      }
+    }
+
+    // 路径2：通过refresh_secret刷新（JWT过期的情况）
+    if (!platform || !platform_user_id || !refresh_secret) {
+      res.status(HTTP_STATUS.BAD_REQUEST).json({
+        error: ERROR_MESSAGES.INVALID_INPUT,
+        message: '请提供jwt或(platform + platform_user_id + refresh_secret)',
+      });
+      return;
+    }
+
+    // 查找BotBinding
+    const binding = await prisma.botBinding.findUnique({
+      where: {
+        platform_platform_user_id: {
+          platform,
+          platform_user_id,
+        },
+      },
+    });
+
+    if (!binding) {
+      res.status(HTTP_STATUS.NOT_FOUND).json({
+        error: '绑定不存在',
+        message: '未找到对应的Bot绑定记录',
+      });
+      return;
+    }
+
+    // 验证refresh_secret
+    if (binding.refresh_secret !== refresh_secret) {
+      res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        error: ERROR_MESSAGES.UNAUTHORIZED,
+        message: 'refresh_secret不匹配',
+      });
+      return;
+    }
+
+    // 获取用户并生成新JWT
+    const user = await prisma.user.findUnique({
+      where: { id: binding.user_id },
+    });
+
+    if (!user) {
+      res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        error: ERROR_MESSAGES.UNAUTHORIZED,
+        message: '用户不存在',
+      });
+      return;
+    }
+
+    const newJwt = generateToken({
+      userId: user.id,
+      email: user.email,
+    });
+
+    console.log(`[Auth] Bot token refreshed for platform: ${platform}, platform_user_id: ${platform_user_id}`);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      jwt: newJwt,
+    });
+  } catch (error) {
+    console.error('[Auth] Bot token error:', error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      error: '获取令牌失败',
+      message: '服务器内部错误',
     });
   }
 });
