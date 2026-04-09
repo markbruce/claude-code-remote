@@ -11,12 +11,14 @@ Claude Code Remote's chat input currently only supports plain text. Claude Code 
 
 The Claude Agent SDK (`SDKUserMessage.message`) uses `MessageParam` from `@anthropic-ai/sdk`, which natively supports content blocks arrays including text and image types. The current `sendMessage()` wrapper only passes strings, but the underlying SDK already supports multimodal content.
 
+**SDK Validation Note**: Implementation must begin with a spike/POC to verify that the Agent SDK's `query()` function correctly processes `MessageParam` with content block arrays (not just strings). The `SDKUserMessage.message` field is typed as `MessageParam` which supports `content: string | ContentBlockParam[]`, but this has not been tested with the agent SDK's prompt stream.
+
 ## Requirements
 
 - Support image files (PNG, JPEG, GIF, WebP) — base64 → SDK image block
 - Support text files (code, logs, config, JSON) — read content → text block
 - Single file size limit: 10MB (configurable)
-- Multiple files per message supported
+- Max 5 attachments per message
 - Files persist for the session lifetime (stored in project `.claude/uploads/`)
 - Agent-pull transport: Server stores temporarily, Agent downloads via signed URL
 - UI: attachment button + drag-and-drop + preview bar (方案 C)
@@ -74,11 +76,14 @@ Errors:
 ```
 
 - Requires authentication (authMiddleware)
-- Validates session_id belongs to current user
+- Validates session ownership: look up `session_id` in server's in-memory sessions Map → get `machineId` → verify machine belongs to authenticated user (database lookup)
+- Verifies agent is online for the session's machine before accepting upload (reject 503 if offline)
 - File size limit: 10MB (env var `MAX_UPLOAD_SIZE_MB`, default 10)
-- Allowed MIME types: `image/*`, `text/*`, `application/json`, `application/xml`, `application/pdf`
-- Stores to `os.tmpdir()/ccr-upload/{fileId}_{filename}`
+- Allowed MIME types: `image/*`, `text/*`, `application/json`, `application/xml`
+- Sanitizes filename: `path.basename(filename)` to strip directory components, reject filenames containing `..`
+- Stores to `os.tmpdir()/ccr-upload/{fileId}_{safeFilename}` (safeFilename = sanitized basename)
 - Returns signed download URL: `/api/upload/{fileId}?token={hmacToken}&expires={timestamp}`
+- Separate rate limit from general API (e.g., 10 uploads/minute per user)
 
 ### `GET /api/upload/:fileId`
 
@@ -91,7 +96,11 @@ Response: File binary stream (Content-Type, Content-Disposition headers)
 
 - Validates HMAC signature and expiry
 - No authMiddleware — signed URL is sufficient authentication
-- One-time use optional (delete after download flag)
+- Deletes temp file after successful download (one-time use)
+
+### Server-Side Temp File Cleanup
+
+A periodic sweep timer (every 5 minutes) deletes files older than `UPLOAD_TTL_MS` (default 10 min) from the temp directory. This prevents indefinite accumulation when Agent fails to download.
 
 ## Shared Type Changes
 
@@ -130,34 +139,58 @@ export interface ChatSendEvent {
 
 | File | Change |
 |------|--------|
-| `packages/agent/src/sdk-session.ts` | MODIFY — `sendMessage()` supports content blocks + attachments |
-| `packages/agent/src/client.ts` | MODIFY — `handleChatSend()` passes attachments to session |
+| `packages/agent/src/sdk-session.ts` | MODIFY — `sendMessage()` supports content blocks + pre-loaded buffers |
+| `packages/agent/src/client.ts` | MODIFY — `handleChatSend()` downloads attachments asynchronously |
+
+#### `handleChatSend()` Enhancement
+
+Download happens in `handleChatSend()` (async), not in `sendMessage()`. This keeps `sendMessage()` synchronous and avoids blocking the event loop with file I/O.
+
+```typescript
+async handleChatSend(data: ChatSendEvent): Promise<void> {
+  const session = this.sdkSessionManager.getSession(data.session_id);
+  if (!session) return;
+
+  // Download and read attachments if present
+  const downloadedAttachments: DownloadedAttachment[] = [];
+  if (data.attachments?.length) {
+    const projectPath = session.getInfo().projectPath;
+    for (const att of data.attachments) {
+      try {
+        const localPath = await this.downloadAttachment(att, projectPath);
+        const fileBuffer = await fs.promises.readFile(localPath);
+        downloadedAttachments.push({ ...att, localPath, data: fileBuffer });
+      } catch (err) {
+        console.error(`[Agent] Failed to download attachment ${att.fileId}:`, err);
+        // Emit error for this attachment but continue with others
+        this.emitChatError(data.session_id, `Failed to load attachment: ${att.filename}`);
+      }
+    }
+  }
+
+  // Send message with text content + successfully downloaded attachments
+  session.sendMessage(data.content, downloadedAttachments);
+}
+```
 
 #### `sendMessage()` Enhancement
 
+`sendMessage()` receives pre-loaded file buffers, avoiding async I/O. Uses inline types to avoid direct `@anthropic-ai/sdk` dependency.
+
 ```typescript
-sendMessage(content: string, attachments?: AttachmentRef[]): void {
+sendMessage(content: string, attachments?: DownloadedAttachment[]): void {
   if (this.state !== SdkSessionState.RUNNING) return;
 
-  // Build content blocks
-  const blocks: ContentBlockParam[] = [{ type: 'text', text: content }];
+  const blocks: Array<{ type: string; text?: string; source?: object }> = [{ type: 'text', text: content }];
 
   for (const att of attachments ?? []) {
-    const localPath = path.join(this.config.projectPath, '.claude', 'uploads', `${att.fileId}_${att.filename}`);
-    const fileBuffer = fs.readFileSync(localPath);
-
     if (att.mimeType.startsWith('image/')) {
       blocks.push({
         type: 'image',
-        source: {
-          type: 'base64',
-          media_type: att.mimeType,
-          data: fileBuffer.toString('base64'),
-        },
+        source: { type: 'base64', media_type: att.mimeType, data: att.data.toString('base64') },
       });
     } else {
-      // Text files: include content as text block
-      const textContent = fileBuffer.toString('utf-8');
+      const textContent = att.data.toString('utf-8');
       blocks.push({ type: 'text', text: `[File: ${att.filename}]\n${textContent}` });
     }
   }
@@ -171,31 +204,46 @@ sendMessage(content: string, attachments?: AttachmentRef[]): void {
 }
 ```
 
-#### `handleChatSend()` Enhancement
-
-Before calling `session.sendMessage()`, Agent downloads all attachments:
+#### `downloadAttachment()` Helper (in client.ts)
 
 ```typescript
-async handleChatSend(data: ChatSendEvent): Promise<void> {
-  const session = this.sdkSessionManager.getSession(data.session_id);
-  if (!session) return;
+private async downloadAttachment(att: AttachmentRef, projectPath: string): Promise<string> {
+  const safeFilename = path.basename(att.filename).replace(/\.\./g, '');
+  const uploadDir = path.join(projectPath, '.claude', 'uploads');
+  await fs.promises.mkdir(uploadDir, { recursive: true });
+  const localPath = path.join(uploadDir, `${att.fileId}_${safeFilename}`);
 
-  // Download attachments if present
-  if (data.attachments?.length) {
-    for (const att of data.attachments) {
-      await this.downloadAttachment(att, session.getProjectPath());
-    }
-  }
+  // Deduplicate: skip download if file already exists
+  try { await fs.promises.access(localPath); return localPath; } catch {}
 
-  session.sendMessage(data.content, data.attachments);
+  const response = await fetch(att.signedUrl);
+  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fs.promises.writeFile(localPath, buffer);
+  return localPath;
+}
+```
+
+#### Agent-Side Type
+
+```typescript
+// Local type in agent package (avoids direct @anthropic-ai/sdk dependency)
+interface DownloadedAttachment {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  localPath: string;
+  data: Buffer;
 }
 ```
 
 #### File Cleanup
 
 Files stored in `{projectPath}/.claude/uploads/` are cleaned up when:
-- Session ends (`SdkSession.end()` calls cleanup)
-- Bot/Agent service restarts (stale files in `.claude/uploads/` with no active session)
+- Session ends (`SdkSession.end()` calls cleanup for this session's files)
+- Agent service restarts (stale files cleaned on startup)
+- A `.gitignore` file is placed in `.claude/uploads/` to exclude attachments from version control
 
 ### Web Side
 
@@ -241,8 +289,9 @@ Files stored in `{projectPath}/.claude/uploads/` are cleaned up when:
 | Images | `image/png`, `image/jpeg`, `image/gif`, `image/webp` | base64 → SDK `image` block |
 | Code/Text | `text/*`, `application/json`, `application/xml` | Read as UTF-8 → `text` block |
 | Markdown | `text/markdown` | Read as UTF-8 → `text` block |
-| PDF | `application/pdf` | base64 → SDK `document` block (if supported) or text extraction |
 | Other | — | Rejected with error message |
+
+> **Note:** PDF support is deferred to a future iteration. The Anthropic SDK's document block support needs further investigation.
 
 ## Error Handling
 
@@ -251,9 +300,13 @@ Files stored in `{projectPath}/.claude/uploads/` are cleaned up when:
 | File too large (>10MB) | Reject at multer middleware, return 413 |
 | Unsupported file type | Reject at file filter, return 400 |
 | Upload fails (network) | Show error toast in UI, remove from preview |
-| Agent download fails | Agent emits CHAT_ERROR, user notified in chat |
+| Agent download fails (partial) | Failed attachment skipped, error emitted in chat, text + other attachments still sent |
+| Agent download fails (all) | If zero attachments succeed, text message still sent, all failures reported |
 | Server temp file expired | Agent gets 404 on download, emits CHAT_ERROR |
 | Session ends during upload | Upload rejected (session_id invalid) |
+| Agent offline during upload | Upload endpoint checks agent online status, rejects with 503 |
+| Path traversal in filename | Server and Agent both sanitize with `path.basename()`, reject `..` |
+| Duplicate fileId in same message | Agent deduplicates by checking if file already exists locally |
 
 ## Configuration
 
@@ -271,8 +324,13 @@ AGENT_DOWNLOAD_DIR=.claude/uploads # Relative to project path
 ## Out of Scope
 
 - Video/audio file attachments
+- PDF attachments (deferred — needs SDK document block investigation)
 - File editing via chat (read-only access)
 - Resumable/chunked uploads
 - File compression before upload
 - Clipboard paste image support (future enhancement)
 - Camera/photo library access (mobile WebView handles this via file picker)
+
+## Deployment Compatibility
+
+The `ChatSendEvent.attachments` field is optional. Server forwarding code passes the entire `data` object through, so it works with both old (no attachments) and new (with attachments) event shapes. Agent must check for `data.attachments?.length` before processing. This allows gradual rollout without requiring atomic deployment across all packages.
