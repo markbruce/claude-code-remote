@@ -161,9 +161,19 @@ export interface ChatMessageEvent {
   timestamp: Date;
 }
 
+/** Reference to an uploaded file attachment */
+export interface AttachmentRef {
+  fileId: string;
+  signedUrl: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatSendEvent {
   session_id: string;
   content: string;
+  attachments?: AttachmentRef[];
 }
 
 export interface ChatPermissionRequestEvent {
