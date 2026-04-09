@@ -18,6 +18,7 @@ export class Bridge {
   readonly platform: BotPlatform;
   readonly config: BotConfig;
   readonly cachedMachines = new Map<string, unknown[]>();  // chatId → last machines list
+  readonly pendingMessages = new Map<string, string>();      // chatId → message to send after session starts
 
   constructor(platform: BotPlatform, config?: BotConfig) {
     this.config = config || loadConfig();
@@ -113,6 +114,29 @@ export class Bridge {
       onSessionStarted: (data) => {
         this.sessions.updateSession(platformUserId, data.sessionId);
         this.platform.sendMessage(platformUserId, { text: `🚀 Session started: ${data.projectPath}` });
+        // Send any pending message that triggered the session
+        const pending = this.pendingMessages.get(platformUserId);
+        if (pending) {
+          this.pendingMessages.delete(platformUserId);
+          this.sockets.emit(platformUserId, SocketEvents.CHAT_SEND, {
+            session_id: data.sessionId,
+            content: pending,
+          });
+        }
+      },
+      onProjectsList: (data) => {
+        const projects = (data as any).projects || [];
+        const text = projects.length === 0
+          ? '📂 No projects found.'
+          : `📂 Projects:\n${projects.map((p: any, i: number) => `${i + 1}. ${p.name || p.path}`).join('\n')}`;
+        this.platform.sendMessage(platformUserId, { text });
+      },
+      onSessionsList: (data) => {
+        const sessions = (data as any).sessions || [];
+        const text = sessions.length === 0
+          ? '📋 No historical sessions.'
+          : `📋 Sessions:\n${sessions.map((s: any, i: number) => `${i + 1}. ${s.id} (${s.mode || 'chat'})`).join('\n')}`;
+        this.platform.sendMessage(platformUserId, { text });
       },
       onChatMessage: (data) => {
         if (data.type === 'text' && data.content) {

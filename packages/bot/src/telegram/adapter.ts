@@ -15,6 +15,7 @@ export class TelegramAdapter implements BotPlatform {
   private messageHandlers: MessageHandler[] = [];
   private callbackHandlers: CallbackHandler[] = [];
   private permissionManager!: PermissionManager; // Set via setPermissionManager
+  private messageListenerRegistered = false;
 
   constructor(token: string) {
     this.bot = new Bot(token);
@@ -98,14 +99,18 @@ export class TelegramAdapter implements BotPlatform {
 
   onMessage(handler: MessageHandler): void {
     this.messageHandlers.push(handler);
-    this.bot.on('message:text', (ctx) => {
-      // Skip commands — they are handled by bot.command() handlers
-      if (ctx.message.text.startsWith('/')) return;
-      const chatId = String(ctx.chat.id);
-      for (const h of this.messageHandlers) {
-        h(chatId, ctx.message.text);
-      }
-    });
+    // Register grammy handler only once
+    if (!this.messageListenerRegistered) {
+      this.messageListenerRegistered = true;
+      this.bot.on('message:text', (ctx) => {
+        // Skip commands — they are handled by bot.command() handlers
+        if (ctx.message.text.startsWith('/')) return;
+        const chatId = String(ctx.chat.id);
+        for (const h of this.messageHandlers) {
+          h(chatId, ctx.message.text);
+        }
+      });
+    }
   }
 
   onCallback(handler: CallbackHandler): void {

@@ -2,11 +2,35 @@
  * Telegram command handlers
  */
 
-import { Bot, Context } from 'grammy';
+import crypto from 'crypto';
+import { Bot } from 'grammy';
 import { Bridge } from '../core/bridge';
 import { SocketEvents } from 'cc-remote-shared';
 import { BOT_COMMANDS } from './commands';
-import { formatMachinesList, formatProjectsList } from './formatter';
+
+// In-memory bind tokens: token → { chatId, createdAt }
+const bindTokens = new Map<string, { chatId: string; createdAt: number }>();
+
+// Clean expired tokens every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, entry] of bindTokens) {
+    if (now - entry.createdAt > 10 * 60 * 1000) {
+      bindTokens.delete(token);
+    }
+  }
+}, 5 * 60 * 1000);
+
+/** Verify a bind token and return the associated chat ID, or undefined */
+export function verifyBindToken(token: string): string | undefined {
+  const entry = bindTokens.get(token);
+  if (!entry) return undefined;
+  if (Date.now() - entry.createdAt > 10 * 60 * 1000) {
+    bindTokens.delete(token);
+    return undefined;
+  }
+  return entry.chatId;
+}
 
 export function registerHandlers(bot: Bot, bridge: Bridge): void {
   // Register commands with Telegram
@@ -22,8 +46,9 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
       return;
     }
 
-    // Generate bind token (in-memory, 10 min TTL — simple random)
-    const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    // Generate cryptographically secure bind token
+    const token = crypto.randomBytes(32).toString('hex');
+    bindTokens.set(token, { chatId, createdAt: Date.now() });
     const bindUrl = `${bridge.config.serverUrl}/bind-telegram?token=${token}&platform_user_id=${chatId}&chat_id=${chatId}`;
 
     await ctx.reply(
@@ -137,14 +162,13 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
 
     // If no active session, start one
     if (!session.session_id) {
+      bridge.pendingMessages.set(chatId, message); // Store message to send after session starts
       bridge.sockets.emit(chatId, SocketEvents.START_SESSION, {
         machine_id: session.machine_id,
         project_path: session.project_path,
         mode: 'chat',
         request_id: `req-${Date.now()}`,
       });
-      // Session will be stored when SESSION_STARTED event fires
-      // The message will be sent after session starts via the bridge
     } else {
       // Send to existing session
       bridge.sockets.emit(chatId, SocketEvents.CHAT_SEND, {

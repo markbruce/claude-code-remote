@@ -5,11 +5,12 @@
  * CLI entry point that starts the bot bridge.
  */
 
+import http from 'http';
 import { Command } from 'commander';
 import { loadConfig } from './config';
 import { Bridge } from './core/bridge';
 import { TelegramAdapter } from './telegram/adapter';
-import { registerHandlers } from './telegram/handlers';
+import { registerHandlers, verifyBindToken } from './telegram/handlers';
 
 const program = new Command();
 
@@ -57,24 +58,45 @@ program
       // 4. Register command handlers (needs bridge for Socket.IO access)
       registerHandlers(adapter.getBot(), bridge);
 
-      // 5. Start
+      // 5. Start lightweight HTTP server for bind token verification
+      const httpServer = http.createServer((req, res) => {
+        if (req.url?.startsWith('/api/bind/verify')) {
+          const url = new URL(req.url, `http://localhost:${config.botPort}`);
+          const token = url.searchParams.get('token');
+          if (token && verifyBindToken(token)) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ valid: true }));
+          } else {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ valid: false, error: 'Invalid or expired token' }));
+          }
+        } else {
+          res.writeHead(404);
+          res.end('Not found');
+        }
+      });
+      httpServer.listen(config.botPort, () => {
+        console.log(`[Bot] HTTP server listening on port ${config.botPort}`);
+      });
+
+      // 6. Start bridge
       await bridge.start();
       console.log('[Bot] Telegram bot is running. Press Ctrl+C to stop.');
+
+      // Graceful shutdown
+      const shutdown = () => {
+        console.log('\n[Bot] Shutting down...');
+        bridge.sockets.disconnectAll();
+        bridge.sessions.close();
+        httpServer.close();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
     } else {
       console.error(`Error: Unsupported platform: ${config.platform}`);
       process.exit(1);
     }
   });
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n[Bot] Shutting down...');
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('\n[Bot] Shutting down...');
-  process.exit(0);
-});
 
 program.parse();
