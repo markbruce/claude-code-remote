@@ -5,7 +5,7 @@
 
 import { io, Socket } from 'socket.io-client';
 import { SocketEvents, SocketNamespaces, SessionOptions, ValidatePathRequest } from 'cc-remote-shared';
-import type { ChatSendEvent, ChatPermissionAnswerEvent, SessionResizeEvent } from 'cc-remote-shared';
+import type { ChatSendEvent, ChatPermissionAnswerEvent, SessionResizeEvent, AttachmentRef } from 'cc-remote-shared';
 import { useSocketStore } from '../stores/socketStore';
 
 // Socket 配置类型
@@ -454,9 +454,9 @@ class SocketManager {
   /**
    * 发送 Chat 消息
    */
-  sendChatMessage(sessionId: string, content: string): void {
+  sendChatMessage(sessionId: string, content: string, attachments?: AttachmentRef[]): void {
     if (!this.socket?.connected) return;
-    const evt: ChatSendEvent = { session_id: sessionId, content };
+    const evt: ChatSendEvent = { session_id: sessionId, content, attachments };
     this.socket.emit(SocketEvents.CHAT_SEND, evt);
   }
 
