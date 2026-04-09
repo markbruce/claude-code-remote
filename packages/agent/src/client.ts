@@ -35,6 +35,7 @@ import {
   GitUnstageRequest,
   GitCommitRequest,
   ValidatePathRequest,
+  AttachmentRef,
 } from 'cc-remote-shared';
 import {
   getGitStatus,
@@ -50,6 +51,7 @@ import { ConfigManager } from './config';
 import { projectScanner } from './scanner';
 import { sessionManager } from './session';
 import { sdkSessionManager } from './sdk-session';
+import { DownloadedAttachment } from './sdk-session';
 
 /**
  * 客户端状态
@@ -619,17 +621,75 @@ export class AgentClient extends EventEmitter {
   /**
    * Chat 模式：处理用户发送消息
    */
-  private handleChatSend(data: ChatSendEvent): void {
+  private async handleChatSend(data: ChatSendEvent): Promise<void> {
     try {
       const session = sdkSessionManager.getSession(data.session_id);
-      if (session && session.isRunning()) {
-        session.sendMessage(data.content);
-      } else {
+      if (!session || !session.isRunning()) {
         console.warn(`Chat 会话不存在或未运行: ${data.session_id}`);
+        return;
       }
+
+      // Download attachments if present
+      const downloadedAttachments: DownloadedAttachment[] = [];
+      if (data.attachments?.length) {
+        const projectPath = session.getInfo().projectPath;
+        for (const att of data.attachments) {
+          try {
+            const localPath = await this.downloadAttachment(att, projectPath);
+            const fileBuffer = await fs.readFile(localPath);
+            downloadedAttachments.push({
+              fileId: att.fileId,
+              filename: att.filename,
+              mimeType: att.mimeType,
+              size: att.size,
+              localPath,
+              data: fileBuffer,
+            });
+          } catch (err) {
+            console.error(`[Agent] Failed to download attachment ${att.fileId}:`, err);
+            // Emit error but continue with other attachments
+            this.socket?.emit(SocketEvents.CHAT_MESSAGE, {
+              session_id: data.session_id,
+              type: 'assistant' as const,
+              content: `Failed to load attachment: ${att.filename}`,
+              timestamp: new Date(),
+            });
+          }
+        }
+      }
+
+      session.sendMessage(data.content, downloadedAttachments);
     } catch (error) {
       console.error('处理 Chat 消息失败:', error);
     }
+  }
+
+  private async downloadAttachment(att: AttachmentRef, projectPath: string): Promise<string> {
+    const safeFilename = path.basename(att.filename).replace(/\.\./g, '');
+    const uploadDir = path.join(projectPath, '.claude', 'uploads');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    // Place .gitignore in uploads dir
+    const gitignorePath = path.join(uploadDir, '.gitignore');
+    try {
+      await fs.access(gitignorePath);
+    } catch {
+      await fs.writeFile(gitignorePath, '*\n!.gitignore\n');
+    }
+
+    const localPath = path.join(uploadDir, `${att.fileId}_${safeFilename}`);
+
+    // Deduplicate: skip download if file already exists
+    try {
+      await fs.access(localPath);
+      return localPath;
+    } catch {}
+
+    const response = await fetch(att.signedUrl);
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(localPath, buffer);
+    return localPath;
   }
 
   /**
