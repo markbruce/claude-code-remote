@@ -2,10 +2,14 @@
 
 /**
  * cc-bot — Claude Code Remote Bot Service
+ * CLI entry point that starts the bot bridge.
  */
 
 import { Command } from 'commander';
 import { loadConfig } from './config';
+import { Bridge } from './core/bridge';
+import { TelegramAdapter } from './telegram/adapter';
+import { registerHandlers } from './telegram/handlers';
 
 const program = new Command();
 
@@ -40,12 +44,37 @@ program
         console.error('Error: Telegram bot token required. Use --bot-token or set TELEGRAM_BOT_TOKEN');
         process.exit(1);
       }
-      // Will be wired in Task 8
-      console.log('[Bot] Telegram adapter not yet implemented');
+
+      // 1. Create adapter (no bridge dependency yet)
+      const adapter = new TelegramAdapter(config.telegramBotToken);
+
+      // 2. Create bridge with adapter
+      const bridge = new Bridge(adapter, config);
+
+      // 3. Inject permission manager into adapter (resolves circular dep)
+      adapter.setPermissionManager(bridge.permissions);
+
+      // 4. Register command handlers (needs bridge for Socket.IO access)
+      registerHandlers(adapter.getBot(), bridge);
+
+      // 5. Start
+      await bridge.start();
+      console.log('[Bot] Telegram bot is running. Press Ctrl+C to stop.');
     } else {
       console.error(`Error: Unsupported platform: ${config.platform}`);
       process.exit(1);
     }
   });
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n[Bot] Shutting down...');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n[Bot] Shutting down...');
+  process.exit(0);
+});
 
 program.parse();
