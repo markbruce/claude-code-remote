@@ -498,11 +498,8 @@ export class SdkSession extends EventEmitter {
 
     if (approved) {
       // 如果有 updatedInput (例如 AskUserQuestion 的答案)，则将其传递回 SDK
-      if (updatedInput) {
-        resolver({ behavior: 'allow', updatedInput });
-      } else {
-        resolver({ behavior: 'allow' });
-      }
+      // SDK 的 PermissionResult Zod schema 要求 allow 分支必须包含 updatedInput
+      resolver({ behavior: 'allow', updatedInput: updatedInput ?? {} });
     } else {
       resolver({ behavior: 'deny', message: message ?? 'User denied this action' });
     }
