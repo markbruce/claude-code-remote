@@ -21,6 +21,7 @@ model User {
 
   // 关系
   machines      Machine[]
+  botBindings   BotBinding[]
 
   @@map("users")
 }
@@ -78,4 +79,22 @@ model SessionLog {
   @@index([machine_id])
   @@index([project_id])
   @@map("session_logs")
+}
+
+// Bot绑定表（Telegram/飞书等）
+model BotBinding {
+  id               String   @id @default(uuid())
+  user_id          String   @map("user_id")
+  platform         String   // "telegram" | "feishu"
+  platform_user_id String   @map("platform_user_id") // Telegram user ID or Feishu open_id
+  chat_id          String   @map("chat_id") // Chat/dialog ID for sending messages
+  refresh_secret   String   @map("refresh_secret") // For JWT refresh when token expires
+  created_at       DateTime @default(now()) @map("created_at")
+
+  // 关系
+  user             User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([platform, platform_user_id])
+  @@index([user_id])
+  @@map("bot_bindings")
 }
