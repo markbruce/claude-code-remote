@@ -432,11 +432,12 @@ class SocketManager {
   /**
    * 获取项目文件列表
    */
-  listFiles(machineId: string, projectPath: string): void {
+  listFiles(machineId: string, projectPath: string, dirPath?: string): void {
     if (!this.socket?.connected) return;
     this.socket.emit(SocketEvents.LIST_FILES, {
       machine_id: machineId,
       project_path: projectPath,
+      dir_path: dirPath,
     });
   }
 
