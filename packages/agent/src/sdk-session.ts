@@ -505,6 +505,31 @@ export class SdkSession extends EventEmitter {
     }
   }
 
+  /**
+   * 中断当前查询，但保持会话活跃（用户可以继续发消息）
+   * 使用 SDK 的 interrupt() 温和中断，而非 AbortController.abort() 杀进程
+   */
+  async abort(): Promise<void> {
+    if (this.state !== SdkSessionState.RUNNING) return;
+
+    console.log(`[SDK:${this.config.sessionId}] 中断当前查询`);
+
+    try {
+      // 使用 SDK interrupt() 温和中断当前查询，不会杀掉进程
+      if (this.queryInstance) {
+        await this.queryInstance.interrupt();
+      }
+    } catch (err) {
+      console.error(`[SDK:${this.config.sessionId}] interrupt 失败:`, err);
+    }
+
+    // Deny any pending permissions
+    for (const [, resolver] of this.pendingPermissions) {
+      resolver({ behavior: 'deny', message: 'Operation aborted by user' });
+    }
+    this.pendingPermissions.clear();
+  }
+
   async end(reason?: string): Promise<void> {
     if (this.state === SdkSessionState.ENDED) return;
 
