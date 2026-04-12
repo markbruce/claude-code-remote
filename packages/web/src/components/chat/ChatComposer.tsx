@@ -1,8 +1,10 @@
 import React, { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSessionStore } from '../../stores/sessionStore';
+import { AttachmentPreview } from './AttachmentPreview';
+import { useFileUpload } from '../../hooks/useFileUpload';
 import { useChatStore } from '../../stores/chatStore';
-import type { SlashCommandItem } from 'cc-remote-shared';
+import type { SlashCommandItem, AttachmentRef } from 'cc-remote-shared';
 
 export interface SlashCommand {
   name: string;
@@ -44,11 +46,12 @@ const CATEGORY_ICONS: Record<string, string> = {
 };
 
 interface ChatComposerProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, attachments?: AttachmentRef[]) => void;
   disabled?: boolean;
   isGenerating?: boolean;
   machineId?: string;
   projectPath?: string;
+  sessionId?: string;
 }
 
 export const ChatComposer: React.FC<ChatComposerProps> = ({
@@ -57,6 +60,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   isGenerating,
   machineId,
   projectPath,
+  sessionId,
 }) => {
   const { t } = useTranslation();
   const [value, setValue] = useState('');
@@ -64,10 +68,14 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false);
   const customCommands = useSessionStore((s) => s.customCommands);
   const fetchCommands = useSessionStore((s) => s.fetchCommands);
   const abortChat = useChatStore((s) => s.abortChat);
   const [commandsFetched, setCommandsFetched] = useState(false);
+  const { attachments, addFiles, removeAttachment, clearAttachments, uploadAll } = useFileUpload();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   useEffect(() => {
     if (machineId && projectPath && !commandsFetched) {
@@ -161,17 +169,68 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
     [],
   );
 
-  const handleSubmit = useCallback(() => {
+  const handleFileSelect = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      addFiles(e.target.files);
+      e.target.value = '';
+    }
+  }, [addFiles]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    if (e.dataTransfer.files) {
+      addFiles(e.dataTransfer.files);
+    }
+  }, [addFiles]);
+
+  const handleSubmit = useCallback(async () => {
     if (showMenu && filteredCommands.length > 0) {
       selectCommand(filteredCommands[selectedIdx] || filteredCommands[0]);
       return;
     }
     const trimmed = value.trim();
-    if (!trimmed || disabled) return;
-    onSend(trimmed);
+    if (!trimmed && attachments.length === 0) return;
+    if (disabled) return;
+
+    // Upload any pending attachments first
+    let uploadedRefs: AttachmentRef[] = [];
+    if (sessionId && attachments.some(a => a.status === 'pending' || a.status === 'error')) {
+      uploadedRefs = await uploadAll(sessionId);
+    }
+
+    // Include already-uploaded attachments too
+    const existingRefs = attachments
+      .filter(a => a.status === 'done' && a.fileId && a.signedUrl)
+      .map(a => ({
+        fileId: a.fileId!,
+        signedUrl: a.signedUrl!,
+        filename: a.file.name,
+        mimeType: a.file.type,
+        size: a.file.size,
+      }));
+
+    const allRefs = [...existingRefs, ...uploadedRefs];
+
+    onSend(trimmed, allRefs.length > 0 ? allRefs : undefined);
     setValue('');
+    clearAttachments();
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  }, [value, disabled, onSend, showMenu, filteredCommands, selectedIdx, selectCommand]);
+  }, [value, disabled, onSend, showMenu, filteredCommands, selectedIdx, selectCommand, attachments, clearAttachments, sessionId, uploadAll]);
 
   const handleAbort = useCallback(() => {
     abortChat();
@@ -211,6 +270,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
         }
       }
       if (e.key === 'Enter' && !e.shiftKey) {
+        if (isComposingRef.current) return;
         e.preventDefault();
         handleSubmit();
       }
@@ -233,7 +293,20 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   }, [selectedIdx, showMenu]);
 
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 relative">
+    <div
+      className={`border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 relative ${isDragOver ? 'ring-2 ring-blue-500 ring-inset' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="image/*,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.json,.xml,.yaml,.yml,.md,.txt,.log,.csv,.sql,.sh,.css,.html"
+        onChange={handleFileChange}
+        className="hidden"
+      />
       {/* Slash command menu */}
       {showMenu && filteredCommands.length > 0 && (
         <div
@@ -276,7 +349,19 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
         </div>
       )}
 
+      <AttachmentPreview attachments={attachments} onRemove={removeAttachment} />
+
       <div className="flex items-end gap-2 max-w-4xl mx-auto">
+        {/* Attachment button */}
+        <button
+          onClick={handleFileSelect}
+          className="flex-shrink-0 p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          title="Attach file"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
         {/* Slash button */}
         <button
           onClick={() => {
@@ -305,6 +390,8 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             value={value}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder={isGenerating ? t('chat.claudeReplying') : t('chat.sendPlaceholder')}
             disabled={disabled}
             rows={1}
@@ -325,7 +412,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!value.trim() || disabled}
+            disabled={(!value.trim() && attachments.length === 0) || disabled}
             className="flex-shrink-0 p-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">

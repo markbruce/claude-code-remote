@@ -13,9 +13,9 @@ import type {
   PermissionResult,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { readFileSync, existsSync, readdirSync } from 'fs';
+import fs, { readFileSync, existsSync, readdirSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import path from 'path';
 import { execSync } from 'child_process';
 import type {
   ChatMessageEvent,
@@ -23,6 +23,16 @@ import type {
   SessionHistoryItem,
   HistoryMessage,
 } from 'cc-remote-shared';
+
+/** Pre-loaded attachment data for sendMessage */
+export interface DownloadedAttachment {
+  fileId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  localPath: string;
+  data: Buffer;
+}
 
 export enum SdkSessionState {
   STARTING = 'starting',
@@ -158,15 +168,15 @@ export class SdkSession extends EventEmitter {
    */
   private getNvmClaudePaths(): string[] {
     const paths: string[] = [];
-    const nvmDir = process.env.NVM_DIR || join(homedir(), '.nvm');
+    const nvmDir = process.env.NVM_DIR || path.join(homedir(), '.nvm');
 
     try {
       // 检查 nvm 的 versions/node 目录
-      const versionsDir = join(nvmDir, 'versions', 'node');
+      const versionsDir = path.join(nvmDir, 'versions', 'node');
       if (existsSync(versionsDir)) {
         const nodeVersions = readdirSync(versionsDir);
         for (const version of nodeVersions) {
-          const claudePath = join(versionsDir, version, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+          const claudePath = path.join(versionsDir, version, 'lib', 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
           if (existsSync(claudePath)) {
             paths.push(claudePath);
           }
@@ -307,6 +317,8 @@ export class SdkSession extends EventEmitter {
         );
       }
     } finally {
+      // Ensure 'complete' is always emitted so the web UI doesn't get stuck in "generating"
+      this.emitChatEvent('complete', {});
       if (this.state !== SdkSessionState.ENDED) {
         this.state = SdkSessionState.ENDED;
         this.emit('end', {
@@ -470,18 +482,45 @@ export class SdkSession extends EventEmitter {
   /**
    * 外部调用：用户发送消息
    */
-  sendMessage(content: string): void {
+  sendMessage(content: string, attachments?: DownloadedAttachment[]): void {
     if (this.state !== SdkSessionState.RUNNING) {
       console.warn(`[SDK:${this.config.sessionId}] 会话未运行，忽略消息`);
       return;
     }
 
-    this.messageQueue.push({
-      type: 'user',
-      message: { role: 'user', content },
-      parent_tool_use_id: null,
-      session_id: this.sdkSessionId ?? '',
-    } as SDKUserMessage);
+    // Build content — use content blocks if attachments present, otherwise plain string
+    if (attachments && attachments.length > 0) {
+      const blocks: Array<{ type: string; text?: string; source?: object }> = [
+        { type: 'text', text: content },
+      ];
+
+      for (const att of attachments) {
+        if (att.mimeType.startsWith('image/')) {
+          blocks.push({
+            type: 'image',
+            source: { type: 'base64', media_type: att.mimeType, data: att.data.toString('base64') },
+          });
+        } else {
+          const textContent = att.data.toString('utf-8');
+          blocks.push({ type: 'text', text: `[File: ${att.filename}]\n${textContent}` });
+        }
+      }
+
+      this.messageQueue.push({
+        type: 'user',
+        message: { role: 'user', content: blocks },
+        parent_tool_use_id: null,
+        session_id: this.sdkSessionId ?? '',
+      } as SDKUserMessage);
+    } else {
+      // Plain text — original behavior
+      this.messageQueue.push({
+        type: 'user',
+        message: { role: 'user', content },
+        parent_tool_use_id: null,
+        session_id: this.sdkSessionId ?? '',
+      } as SDKUserMessage);
+    }
   }
 
   /**
@@ -502,6 +541,22 @@ export class SdkSession extends EventEmitter {
       resolver({ behavior: 'allow', updatedInput: updatedInput ?? {} });
     } else {
       resolver({ behavior: 'deny', message: message ?? 'User denied this action' });
+    }
+  }
+
+  /**
+   * 清理本会话的上传文件
+   */
+  cleanupUploads(): void {
+    const uploadDir = path.join(this.config.projectPath, '.claude', 'uploads');
+    try {
+      if (!fs.existsSync(uploadDir)) return;
+      const files = fs.readdirSync(uploadDir);
+      for (const file of files) {
+        try { fs.unlinkSync(path.join(uploadDir, file)); } catch {}
+      }
+    } catch {
+      // Ignore cleanup errors
     }
   }
 
@@ -535,6 +590,7 @@ export class SdkSession extends EventEmitter {
 
     console.log(`[SDK:${this.config.sessionId}] 结束会话: ${reason ?? '用户请求'}`);
     this.state = SdkSessionState.ENDED;
+    this.cleanupUploads();
 
     for (const [, resolver] of this.pendingPermissions) {
       resolver({ behavior: 'deny', message: 'Session ended' });
@@ -804,9 +860,9 @@ export class SdkSessionManager extends EventEmitter {
    */
   private readSessionJsonlDirectly(sdkSessionId: string, projectPath: string): SDKMessage[] {
     try {
-      const projectsDir = join(homedir(), '.claude', 'projects');
+      const projectsDir = path.join(homedir(), '.claude', 'projects');
       const safeProjectPath = projectPath.replace(/[\/_]/g, "-");
-      const jsonlPath = join(projectsDir, safeProjectPath, `${sdkSessionId}.jsonl`);
+      const jsonlPath = path.join(projectsDir, safeProjectPath, `${sdkSessionId}.jsonl`);
 
       console.log(`[SdkSessionManager] Reading JSONL directly: ${jsonlPath}`);
 
@@ -1131,7 +1187,7 @@ export class SdkSessionManager extends EventEmitter {
   async getHistorySession(sessionId: string): Promise<{ sessionId: string; cwd: string } | null> {
     try {
       // 获取 Claude 项目目录下的所有项目
-      const projectsDir = join(homedir(), '.claude', 'projects');
+      const projectsDir = path.join(homedir(), '.claude', 'projects');
 
       if (!existsSync(projectsDir)) {
         console.log(`[SdkSessionManager] Projects directory not found: ${projectsDir}`);

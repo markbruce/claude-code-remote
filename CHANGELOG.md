@@ -17,6 +17,21 @@ All notable changes to this project will be documented in this file.
 
 - Add abort/interrupt session support using SDK `interrupt()` method ([#3](https://github.com/markbruce/claude-code-remote/issues/3))
 - 新增会话中断功能，使用 SDK `interrupt()` 方法温和中断当前查询，保持会话存活
+- Add file attachment support for chat mode: upload images and text files via button or drag-and-drop ([#4](https://github.com/markbruce/claude-code-remote/issues/4))
+- 新增聊天模式文件附件功能：支持通过按钮或拖拽上传图片和文本文件
+- Server upload endpoint with multer, signed URL for secure file download by agent
+- 服务端文件上传接口，使用 multer 中间件和签名 URL 实现安全文件下载
+- Agent-side attachment processing: images sent as base64, text files inlined
+- Agent 端附件处理：图片以 base64 格式发送，文本文件内联展示
+- Attachment preview component with image thumbnails and file icons
+- 附件预览组件，支持图片缩略图和文件图标展示
+
+### Fixed / 修复
+
+- Fix upload API missing Authorization header causing 401 errors
+- 修复文件上传接口缺少 Authorization 请求头导致 401 错误的问题
+- Fix agent failing to download attachments due to relative signed URLs not resolved against server URL
+- 修复 Agent 下载附件失败的问题：相对路径的签名 URL 未拼接服务器地址
 
 ## [v1.1.2] - 2026-04-03
 

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { SocketEvents } from 'cc-remote-shared';
-import type { ChatMessageEvent, ChatPermissionRequestEvent, HistoryMessage } from 'cc-remote-shared';
+import type { ChatMessageEvent, ChatPermissionRequestEvent, HistoryMessage, AttachmentRef } from 'cc-remote-shared';
 import { socketManager } from '../lib/socket';
 import i18n from '../i18n';
 
@@ -45,7 +45,7 @@ interface ChatState {
   currentMachineId: string | null;
   currentProjectPath: string | null;
 
-  sendMessage: (sessionId: string, content: string) => void;
+  sendMessage: (sessionId: string, content: string, attachments?: AttachmentRef[]) => void;
   abortChat: () => void;
   handleChatEvent: (event: ChatMessageEvent) => void;
   answerPermission: (sessionId: string, requestId: string, approved: boolean, message?: string, updatedInput?: Record<string, unknown>) => void;
@@ -78,7 +78,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentMachineId: null,
   currentProjectPath: null,
 
-  sendMessage: (sessionId: string, content: string) => {
+  sendMessage: (sessionId: string, content: string, attachments?: AttachmentRef[]) => {
     const userMsg: ChatMessage = {
       id: genId(),
       type: 'user',
@@ -86,7 +86,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       timestamp: new Date(),
     };
     set((s) => ({ messages: [...s.messages, userMsg], isGenerating: true }));
-    socketManager.sendChatMessage(sessionId, content);
+    socketManager.sendChatMessage(sessionId, content, attachments);
   },
 
   abortChat: () => {
