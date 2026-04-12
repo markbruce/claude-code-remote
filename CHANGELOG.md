@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added / 新增
 
+- Add abort/interrupt session support using SDK `interrupt()` method ([#3](https://github.com/markbruce/claude-code-remote/issues/3))
+- 新增会话中断功能，使用 SDK `interrupt()` 方法温和中断当前查询，保持会话存活
+
 ## [v1.1.2] - 2026-04-03
 
 ### Fixed / 修复
