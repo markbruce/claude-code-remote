@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
+## Unreleased
+
+### Added / 新增
+
+- Fix iOS auto-zoom on chat input focus by using 16px font-size ([#2](https://github.com/markbruce/claude-code-remote/issues/2))
+- 修复 iOS 聊天输入框聚焦时自动缩放问题，使用 16px 字体大小
+
 ## [v1.1.2] - 2026-04-03
 
 ### Fixed / 修复
