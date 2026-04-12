@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import type { AttachmentRef } from 'cc-remote-shared';
+import { apiClient } from '../lib/api';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const MAX_ATTACHMENTS = 5;
@@ -83,8 +84,12 @@ export function useFileUpload(): useFileUploadReturn {
         formData.append('file', att.file);
         formData.append('session_id', sessionId);
 
+        const token = apiClient.getToken();
         const response = await fetch('/api/upload', {
           method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: formData,
         });
 

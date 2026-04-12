@@ -68,6 +68,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   const [selectedIdx, setSelectedIdx] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false);
   const customCommands = useSessionStore((s) => s.customCommands);
   const fetchCommands = useSessionStore((s) => s.fetchCommands);
   const abortChat = useChatStore((s) => s.abortChat);
@@ -269,6 +270,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
         }
       }
       if (e.key === 'Enter' && !e.shiftKey) {
+        if (isComposingRef.current) return;
         e.preventDefault();
         handleSubmit();
       }
@@ -388,6 +390,8 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             value={value}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            onCompositionStart={() => { isComposingRef.current = true; }}
+            onCompositionEnd={() => { isComposingRef.current = false; }}
             placeholder={isGenerating ? t('chat.claudeReplying') : t('chat.sendPlaceholder')}
             disabled={disabled}
             rows={1}

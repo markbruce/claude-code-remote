@@ -693,7 +693,11 @@ export class AgentClient extends EventEmitter {
       return localPath;
     } catch {}
 
-    const response = await fetch(att.signedUrl);
+    // signedUrl is relative (e.g. /api/upload/xxx?token=...), resolve against server URL
+    const downloadUrl = att.signedUrl.startsWith('http')
+      ? att.signedUrl
+      : `${this.config.serverUrl}${att.signedUrl}`;
+    const response = await fetch(downloadUrl);
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     await fs.writeFile(localPath, buffer);
