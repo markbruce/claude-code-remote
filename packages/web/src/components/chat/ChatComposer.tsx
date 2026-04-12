@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useSessionStore } from '../../stores/sessionStore';
 import { AttachmentPreview } from './AttachmentPreview';
 import { useFileUpload } from '../../hooks/useFileUpload';
+import { useChatStore } from '../../stores/chatStore';
 import type { SlashCommandItem, AttachmentRef } from 'cc-remote-shared';
 
 export interface SlashCommand {
@@ -69,6 +70,7 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const customCommands = useSessionStore((s) => s.customCommands);
   const fetchCommands = useSessionStore((s) => s.fetchCommands);
+  const abortChat = useChatStore((s) => s.abortChat);
   const [commandsFetched, setCommandsFetched] = useState(false);
   const { attachments, addFiles, removeAttachment, clearAttachments, uploadAll } = useFileUpload();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -229,6 +231,10 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, [value, disabled, onSend, showMenu, filteredCommands, selectedIdx, selectCommand, attachments, clearAttachments, sessionId, uploadAll]);
 
+  const handleAbort = useCallback(() => {
+    abortChat();
+  }, [abortChat]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (showMenu && filteredCommands.length > 0) {
@@ -385,20 +391,32 @@ export const ChatComposer: React.FC<ChatComposerProps> = ({
             placeholder={isGenerating ? t('chat.claudeReplying') : t('chat.sendPlaceholder')}
             disabled={disabled}
             rows={1}
-            className="w-full resize-none bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg px-4 py-2.5 text-sm placeholder-gray-400 dark:placeholder-gray-500 outline-none border border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400 focus:bg-white dark:focus:bg-gray-700 transition-colors disabled:opacity-50"
+            className="w-full resize-none bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg px-4 py-2.5 text-base placeholder-gray-400 dark:placeholder-gray-500 outline-none border border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400 focus:bg-white dark:focus:bg-gray-700 transition-colors disabled:opacity-50"
             style={{ maxHeight: 200 }}
           />
         </div>
-        <button
-          onClick={handleSubmit}
-          disabled={(!value.trim() && attachments.length === 0) || disabled}
-          className="flex-shrink-0 p-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-          </svg>
-        </button>
+        {isGenerating ? (
+          <button
+            onClick={handleAbort}
+            className="flex-shrink-0 p-2.5 rounded-lg bg-red-600 hover:bg-red-700 transition-colors"
+            title="Stop"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        ) : (
+          <button
+            onClick={handleSubmit}
+            disabled={(!value.trim() && attachments.length === 0) || disabled}
+            className="flex-shrink-0 p-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="max-w-4xl mx-auto mt-1.5 flex items-center gap-3 text-[11px] text-gray-500 dark:text-gray-400">

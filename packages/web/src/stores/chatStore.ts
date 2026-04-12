@@ -46,6 +46,7 @@ interface ChatState {
   currentProjectPath: string | null;
 
   sendMessage: (sessionId: string, content: string, attachments?: AttachmentRef[]) => void;
+  abortChat: () => void;
   handleChatEvent: (event: ChatMessageEvent) => void;
   answerPermission: (sessionId: string, requestId: string, approved: boolean, message?: string, updatedInput?: Record<string, unknown>) => void;
   loadHistoryMessages: (messages: HistoryMessage[]) => void;
@@ -86,6 +87,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     };
     set((s) => ({ messages: [...s.messages, userMsg], isGenerating: true }));
     socketManager.sendChatMessage(sessionId, content, attachments);
+  },
+
+  abortChat: () => {
+    const { currentSdkSessionId } = get();
+    if (!currentSdkSessionId) return;
+    socketManager.abortChat(currentSdkSessionId);
+    set({ isGenerating: false });
   },
 
   handleChatEvent: (event: ChatMessageEvent) => {

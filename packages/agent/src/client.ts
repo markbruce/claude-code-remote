@@ -233,6 +233,14 @@ export class AgentClient extends EventEmitter {
       this.handleChatPermissionAnswer(data);
     });
 
+    // Chat 模式：中断当前查询
+    this.socket.on(SocketEvents.CHAT_ABORT, (data: { session_id: string }) => {
+      const session = sdkSessionManager.getSession(data.session_id);
+      if (session) {
+        session.abort();
+      }
+    });
+
     // Shell 模式：终端 resize
     this.socket.on(SocketEvents.SESSION_RESIZE, (data: SessionResizeEvent) => {
       this.handleSessionResize(data);
