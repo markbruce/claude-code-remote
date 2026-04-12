@@ -317,6 +317,8 @@ export class SdkSession extends EventEmitter {
         );
       }
     } finally {
+      // Ensure 'complete' is always emitted so the web UI doesn't get stuck in "generating"
+      this.emitChatEvent('complete', {});
       if (this.state !== SdkSessionState.ENDED) {
         this.state = SdkSessionState.ENDED;
         this.emit('end', {
