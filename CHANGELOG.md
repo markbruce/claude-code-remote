@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
+## Unreleased
+
+### Fixed / 修复
+
+- Fix ZodError on permission approval by passing `updatedInput` as empty object when absent ([#1](https://github.com/markbruce/claude-code-remote/issues/1))
+- 修复权限审批时因缺少 `updatedInput` 字段导致 Zod 校验报错的问题
+
 ## [v1.1.2] - 2026-04-03
 
 ### Fixed / 修复
