@@ -816,10 +816,8 @@ export class AgentClient extends EventEmitter {
       'node_modules', '.git', '.next', 'dist', 'build', '.turbo',
       '__pycache__', '.venv', 'venv', '.DS_Store', 'coverage',
     ]);
-    const MAX_DEPTH = 3;
 
-    const scan = async (dir: string, depth: number): Promise<FileTreeItem[]> => {
-      if (depth > MAX_DEPTH) return [];
+    const scanSingleLevel = async (dir: string): Promise<FileTreeItem[]> => {
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         const items: FileTreeItem[] = [];
@@ -827,8 +825,7 @@ export class AgentClient extends EventEmitter {
           if (IGNORED.has(entry.name) || entry.name.startsWith('.')) continue;
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            const children = await scan(fullPath, depth + 1);
-            items.push({ name: entry.name, path: fullPath, type: 'directory', children });
+            items.push({ name: entry.name, path: fullPath, type: 'directory' });
           } else {
             items.push({ name: entry.name, path: fullPath, type: 'file' });
           }
@@ -843,12 +840,15 @@ export class AgentClient extends EventEmitter {
       }
     };
 
+    const targetDir = data.dir_path || data.project_path;
+
     try {
-      const tree = await scan(data.project_path, 0);
+      const items = await scanSingleLevel(targetDir);
       this.socket?.emit(SocketEvents.FILES_LIST, {
         machine_id: data.machine_id,
         project_path: data.project_path,
-        files: tree,
+        dir_path: data.dir_path,
+        files: items,
         request_id: data.request_id,
       });
     } catch (error) {
@@ -856,6 +856,7 @@ export class AgentClient extends EventEmitter {
       this.socket?.emit(SocketEvents.FILES_LIST, {
         machine_id: data.machine_id,
         project_path: data.project_path,
+        dir_path: data.dir_path,
         files: [],
         request_id: data.request_id,
       });
