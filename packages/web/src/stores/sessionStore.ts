@@ -60,6 +60,11 @@ interface SessionState {
   customCommands: SlashCommandItem[];
   pendingSessionRequestId: string | null; // 用于验证 SESSION_STARTED 是否是自己发起的
 
+  // 会话分享状态
+  isSharing: boolean;
+  shareLink: string | null;
+  viewersCount: number;
+
   // 多标签页编辑状态
   editorTabs: EditorTab[];
   activeTabPath: string | null;
@@ -91,6 +96,10 @@ interface SessionState {
   fetchCommands: (machineId: string, projectPath: string) => void;
   clearError: () => void;
   reset: () => void;
+
+  // 会话分享操作
+  startSharing: (sessionId: string) => void;
+  stopSharing: (sessionId: string) => void;
 
   // 文件操作（多标签）
   openFilePreview: (machineId: string, projectPath: string, filePath: string) => void;
@@ -138,6 +147,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadingDirs: new Set(),
   customCommands: [],
   pendingSessionRequestId: null,
+
+  // 会话分享
+  isSharing: false,
+  shareLink: null,
+  viewersCount: 0,
 
   // 多标签页编辑初始状态
   editorTabs: [],
@@ -283,6 +297,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // 清除错误
   clearError: () => {
     set({ error: null });
+  },
+
+  // 会话分享：发起分享
+  startSharing: (sessionId: string) => {
+    socketManager.shareSession(sessionId);
+  },
+
+  // 会话分享：停止分享
+  stopSharing: (sessionId: string) => {
+    socketManager.stopShare(sessionId);
+    set({ isSharing: false, shareLink: null, viewersCount: 0 });
   },
 
   // 打开文件（预览模式）- 单击时调用
@@ -827,6 +852,39 @@ export const subscribeToSessionEvents = (): (() => void) => {
       const result = data as ValidatePathResponse;
       const store = useSessionStore.getState();
       store.setPathValidationResult(result);
+    })
+  );
+
+  // 会话分享：收到 shareToken
+  unsubscribers.push(
+    socketManager.on(SocketEvents.SHARE_SESSION, (data: unknown) => {
+      const typedData = data as { session_id: string; shareToken: string };
+      const baseUrl = window.location.origin;
+      const shareLink = `${baseUrl}/shared/${typedData.shareToken}`;
+      useSessionStore.setState({
+        isSharing: true,
+        shareLink,
+        viewersCount: 0,
+      });
+    })
+  );
+
+  // 会话分享：停止分享
+  unsubscribers.push(
+    socketManager.on(SocketEvents.STOP_SHARE, (_data: unknown) => {
+      useSessionStore.setState({
+        isSharing: false,
+        shareLink: null,
+        viewersCount: 0,
+      });
+    })
+  );
+
+  // 会话分享：观众数量更新
+  unsubscribers.push(
+    socketManager.on(SocketEvents.SHARED_SESSION_VIEWERS, (data: unknown) => {
+      const typedData = data as { sessionId: string; viewersCount: number };
+      useSessionStore.setState({ viewersCount: typedData.viewersCount });
     })
   );
 

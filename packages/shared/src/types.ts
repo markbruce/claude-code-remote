@@ -446,3 +446,26 @@ export interface ValidatePathResponse {
   path?: string;
   error?: string;
 }
+
+// ==================== 会话分享类型 ====================
+
+/** Owner 发起分享 */
+export interface ShareSessionEvent {
+  session_id: string;
+}
+
+/** Owner 停止分享 */
+export interface StopShareEvent {
+  session_id: string;
+}
+
+/** 访客通过 shareToken 加入 */
+export interface JoinSharedSessionRequest {
+  shareToken: string;
+}
+
+/** 广播观众数量 */
+export interface SharedSessionViewersEvent {
+  sessionId: string;
+  viewersCount: number;
+}

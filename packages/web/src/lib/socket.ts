@@ -116,6 +116,52 @@ class SocketManager {
   }
 
   /**
+   * 以访客身份连接（通过 shareToken，无需 JWT）
+   */
+  connectAsViewer(serverUrl: string, shareToken: string): Promise<Socket> {
+    return new Promise((resolve, reject) => {
+      if (this.socket?.connected) {
+        resolve(this.socket);
+        return;
+      }
+
+      const namespaceUrl = `${serverUrl}${SocketNamespaces.CLIENT}`;
+
+      this.socket = io(namespaceUrl, {
+        auth: { shareToken },
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+      });
+
+      this.socket.on('connect', () => {
+        console.log('[Socket] Viewer connected');
+        useSocketStore.setState({ isConnected: true, isConnecting: false });
+        this.reconnectAttempts = 0;
+        resolve(this.socket!);
+
+        // 自动加入分享的会话
+        this.socket!.emit(SocketEvents.JOIN_SHARED_SESSION, { shareToken });
+      });
+
+      this.socket.on('connect_error', (error: Error) => {
+        console.error('[Socket] Viewer 连接错误:', error.message);
+        reject(new Error(`连接失败: ${error.message}`));
+      });
+
+      this.socket.on('disconnect', (reason: Socket.DisconnectReason) => {
+        console.log('[Socket] Viewer 断开连接:', reason);
+        useSocketStore.setState({ isConnected: false, isConnecting: false });
+        this.notifyListeners('disconnect', { reason });
+      });
+
+      this.registerEventHandlers();
+    });
+  }
+
+  /**
    * 注册事件处理器
    */
   private registerEventHandlers(): void {
@@ -221,6 +267,17 @@ class SocketManager {
     this.socket.on(SocketEvents.PATH_VALIDATED, (data: unknown) => {
       console.log('[Socket] 路径验证结果:', data);
       this.notifyListeners(SocketEvents.PATH_VALIDATED, data);
+    });
+
+    // 会话分享事件
+    this.socket.on(SocketEvents.SHARE_SESSION, (data: unknown) => {
+      this.notifyListeners(SocketEvents.SHARE_SESSION, data);
+    });
+    this.socket.on(SocketEvents.STOP_SHARE, (data: unknown) => {
+      this.notifyListeners(SocketEvents.STOP_SHARE, data);
+    });
+    this.socket.on(SocketEvents.SHARED_SESSION_VIEWERS, (data: unknown) => {
+      this.notifyListeners(SocketEvents.SHARED_SESSION_VIEWERS, data);
     });
   }
 
@@ -535,6 +592,22 @@ class SocketManager {
     };
     this.socket.emit(SocketEvents.VALIDATE_PATH, data);
     return requestId;
+  }
+
+  /**
+   * 发起会话分享（Owner）
+   */
+  shareSession(sessionId: string): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit(SocketEvents.SHARE_SESSION, { session_id: sessionId });
+  }
+
+  /**
+   * 停止会话分享（Owner）
+   */
+  stopShare(sessionId: string): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit(SocketEvents.STOP_SHARE, { session_id: sessionId });
   }
 
   /**

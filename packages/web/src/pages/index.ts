@@ -8,3 +8,4 @@ export { ProjectsPage } from './ProjectsPage';
 export { SessionPage } from './SessionPage';
 export { WorkspacePage } from './WorkspacePage';
 export { BindBotPage } from './BindBotPage';
+export { SharedSessionPage } from './SharedSessionPage';

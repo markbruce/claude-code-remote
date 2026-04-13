@@ -36,6 +36,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
     loadMoreHistoryMessages,
   } = useChatStore();
   const isResumed = useSessionStore((s) => s.isResumedSession);
+  const isSharing = useSessionStore((s) => s.isSharing);
+  const shareLink = useSessionStore((s) => s.shareLink);
+  const viewersCount = useSessionStore((s) => s.viewersCount);
+  const startSharing = useSessionStore((s) => s.startSharing);
+  const stopSharing = useSessionStore((s) => s.stopSharing);
+
+  const handleShare = useCallback(() => {
+    if (isSharing && shareLink) {
+      navigator.clipboard.writeText(shareLink);
+    } else {
+      startSharing(sessionId);
+    }
+  }, [isSharing, shareLink, startSharing, sessionId]);
+
+  const handleStopShare = useCallback(() => {
+    stopSharing(sessionId);
+  }, [stopSharing, sessionId]);
 
   const addSystemMessage = useCallback((content: string) => {
     const msg: ChatMessage = { id: genSysId(), type: 'assistant', content, timestamp: new Date() };
@@ -100,11 +117,41 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat</span>
           {isResumed && <span className="text-xs text-blue-500 dark:text-blue-400">({t('chat.resumedShort')})</span>}
         </div>
-        <TokenUsagePanel
-          used={tokenUsage?.total || 0}
-          total={200000}
-          isLoading={isGenerating}
-        />
+        <div className="flex items-center gap-2">
+          {isSharing ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-green-600 dark:text-green-400">
+                👁 {viewersCount} viewer{viewersCount !== 1 ? 's' : ''}
+              </span>
+              <button
+                onClick={handleShare}
+                className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title="Copy link"
+              >
+                Copy Link
+              </button>
+              <button
+                onClick={handleStopShare}
+                className="text-xs px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+              >
+                Stop
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleShare}
+              className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title="Share session"
+            >
+              Share
+            </button>
+          )}
+          <TokenUsagePanel
+            used={tokenUsage?.total || 0}
+            total={200000}
+            isLoading={isGenerating}
+          />
+        </div>
       </div>
       <ChatMessagesPane
         messages={messages}
