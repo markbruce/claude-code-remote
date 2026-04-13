@@ -7,3 +7,4 @@ export { MachinesPage } from './MachinesPage';
 export { ProjectsPage } from './ProjectsPage';
 export { SessionPage } from './SessionPage';
 export { WorkspacePage } from './WorkspacePage';
+export { SharedSessionPage } from './SharedSessionPage';

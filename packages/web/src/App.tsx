@@ -5,7 +5,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout, AuthGuard } from './components';
-import { LoginPage, MachinesPage, ProjectsPage, SessionPage } from './pages';
+import { LoginPage, MachinesPage, ProjectsPage, SessionPage, SharedSessionPage } from './pages';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { useAuthStore } from './stores';
 
@@ -75,6 +75,12 @@ const App: React.FC = () => {
               </Layout>
             </AuthGuard>
           }
+        />
+
+        {/* 会话分享（无需登录） */}
+        <Route
+          path="/shared/:shareToken"
+          element={<SharedSessionPage />}
         />
 
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -60,6 +60,12 @@ export const SocketEvents = {
   MACHINES_LIST: 'machines:list',
   ERROR: 'error',
 
+  // 会话分享事件
+  SHARE_SESSION: 'share-session',
+  STOP_SHARE: 'stop-share',
+  JOIN_SHARED_SESSION: 'join-shared-session',
+  SHARED_SESSION_VIEWERS: 'shared:viewers',
+
   // Agent 状态事件
   AGENT_STATUS_CHANGED: 'agent:status_changed',
 

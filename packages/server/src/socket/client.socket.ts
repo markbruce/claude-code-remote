@@ -26,9 +26,22 @@ import {
   ReadFileRequest,
   WriteFileRequest,
   ValidatePathRequest,
+  JoinSharedSessionRequest,
+  SharedSessionViewersEvent,
 } from 'cc-remote-shared';
 import { verifyToken, JwtPayload } from '../auth';
-import { onlineMachines, sessions, sessionBuffers, getMachineSessions, getIoInstance } from './store';
+import {
+  onlineMachines,
+  sessions,
+  sessionBuffers,
+  chatBuffers,
+  getMachineSessions,
+  getIoInstance,
+  generateShareToken,
+  revokeShareToken,
+  getSessionByShareToken,
+  sessionShareTokens,
+} from './store';
 import { isMachineOnline } from './agent.socket';
 
 const prisma = new PrismaClient();
@@ -52,26 +65,40 @@ export function removePendingRequest(requestId: string): void {
 
 // Client Socket认证接口
 interface ClientAuthData {
-  token: string;
+  token?: string;
+  shareToken?: string;
 }
 
 // 扩展Socket类型
 interface ClientSocket extends Socket {
   data: {
-    userId: string;
-    email: string;
-    jwtPayload: JwtPayload;
+    userId?: string;
+    email?: string;
+    jwtPayload?: JwtPayload;
+    isViewer?: boolean;
+    shareToken?: string;
   };
 }
 
 /**
  * Client认证中间件
- * 验证JWT令牌
+ * 验证JWT令牌；若提供 shareToken 则标记为 viewer（匿名访客）
  */
 export async function clientAuthMiddleware(socket: Socket, next: (err?: Error) => void) {
   try {
     const auth = socket.handshake.auth as ClientAuthData;
-    const { token } = auth;
+    const { token, shareToken } = auth;
+
+    // 访客模式：通过 shareToken 加入
+    if (!token && shareToken) {
+      const sessionId = getSessionByShareToken(shareToken);
+      if (!sessionId) {
+        return next(new Error('无效的分享链接'));
+      }
+      socket.data = { isViewer: true, shareToken };
+      console.log(`[Client] Viewer connected via shareToken`);
+      return next();
+    }
 
     if (!token) {
       return next(new Error('缺少JWT令牌'));
@@ -157,6 +184,18 @@ function emitToAgent(machineId: string, event: string, data: unknown): boolean {
  */
 export function handleClientConnection(socket: ClientSocket) {
   const userId = socket.data.userId;
+  const isViewer = socket.data.isViewer;
+
+  // Viewer 模式：不需要发送机器列表等
+  if (isViewer) {
+    console.log(`[Client] Viewer connected: ${socket.id}`);
+    return;
+  }
+
+  if (!userId) {
+    socket.disconnect(true);
+    return;
+  }
 
   console.log(`[Client] Connected: ${socket.id} for user ${userId}`);
 
@@ -435,6 +474,10 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // 处理会话输入
   socket.on(SocketEvents.SESSION_INPUT, (data: SessionInputEvent) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法发送输入' });
+      return;
+    }
     const sessionInfo = sessions.get(data.session_id);
     if (!sessionInfo) {
       socket.emit(SocketEvents.ERROR, {
@@ -449,6 +492,10 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // 处理权限回答（Shell 模式）
   socket.on(SocketEvents.SESSION_PERMISSION_ANSWER, (data: SessionPermissionAnswerEvent) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法审批权限' });
+      return;
+    }
     const sessionInfo = sessions.get(data.session_id);
     if (!sessionInfo) {
       socket.emit(SocketEvents.ERROR, {
@@ -462,6 +509,10 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // Chat 模式：转发用户消息（Client -> Agent）
   socket.on(SocketEvents.CHAT_SEND, (data: ChatSendEvent) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法发送消息' });
+      return;
+    }
     const sessionInfo = sessions.get(data.session_id);
     if (!sessionInfo) {
       socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
@@ -472,6 +523,10 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // Chat 模式：转发权限审批回答（Client -> Agent）
   socket.on(SocketEvents.CHAT_PERMISSION_ANSWER, (data: ChatPermissionAnswerEvent) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法审批权限' });
+      return;
+    }
     const sessionInfo = sessions.get(data.session_id);
     if (!sessionInfo) {
       socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
@@ -482,6 +537,10 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // Chat 模式：转发中断请求（Client -> Agent）
   socket.on(SocketEvents.CHAT_ABORT, (data: { session_id: string }) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法中断会话' });
+      return;
+    }
     const sessionInfo = sessions.get(data.session_id);
     if (!sessionInfo) {
       socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
@@ -499,6 +558,121 @@ export function handleClientConnection(socket: ClientSocket) {
     }
     emitToAgent(sessionInfo.machineId, SocketEvents.SESSION_RESIZE, data);
   });
+
+  // ==================== 会话分享事件 ====================
+
+  // Owner 发起分享
+  socket.on(SocketEvents.SHARE_SESSION, (data: { session_id: string }) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法发起分享' });
+      return;
+    }
+    const sessionInfo = sessions.get(data.session_id);
+    if (!sessionInfo) {
+      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+      return;
+    }
+    const token = generateShareToken(data.session_id);
+    socket.emit(SocketEvents.SHARE_SESSION, {
+      session_id: data.session_id,
+      shareToken: token,
+    });
+    console.log(`[Client] Session shared: ${data.session_id}, token: ${token}`);
+  });
+
+  // Owner 停止分享
+  socket.on(SocketEvents.STOP_SHARE, (data: { session_id: string }) => {
+    if (socket.data.isViewer) {
+      socket.emit(SocketEvents.ERROR, { message: '访客无法停止分享' });
+      return;
+    }
+    const sessionInfo = sessions.get(data.session_id);
+    if (!sessionInfo) {
+      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+      return;
+    }
+
+    // 踢出所有 viewer socket
+    const room = `session:${data.session_id}`;
+    const io = getIoInstance();
+    if (io) {
+      const socketsInRoom = io.sockets.adapter.rooms.get(room);
+      if (socketsInRoom) {
+        for (const sid of socketsInRoom) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.isViewer) {
+            s.emit(SocketEvents.STOP_SHARE, { session_id: data.session_id });
+            s.disconnect(true);
+          }
+        }
+      }
+    }
+
+    revokeShareToken(data.session_id);
+    socket.emit(SocketEvents.STOP_SHARE, { session_id: data.session_id });
+    socket.emit(SocketEvents.SHARED_SESSION_VIEWERS, { sessionId: data.session_id, viewersCount: 0 });
+    console.log(`[Client] Session sharing stopped: ${data.session_id}`);
+  });
+
+  // 访客通过 shareToken 加入
+  socket.on(SocketEvents.JOIN_SHARED_SESSION, (data: JoinSharedSessionRequest) => {
+    const sessionId = getSessionByShareToken(data.shareToken);
+    if (!sessionId) {
+      socket.emit(SocketEvents.ERROR, { message: '无效或已过期的分享链接' });
+      return;
+    }
+
+    const sessionInfo = sessions.get(sessionId);
+    if (!sessionInfo) {
+      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+      return;
+    }
+
+    const room = `session:${sessionId}`;
+    socket.join(room);
+    sessionInfo.clientsCount++;
+
+    // 标记 viewer 的 sessionId
+    (socket.data as any).viewerSessionId = sessionId;
+
+    // 回放 chatBuffer 给访客
+    const buffer = chatBuffers.get(sessionId);
+    if (buffer && buffer.length > 0) {
+      for (const msg of buffer) {
+        socket.emit(SocketEvents.CHAT_MESSAGE, msg);
+      }
+    }
+
+    // 广播观众数量给 room 内所有人
+    const io = getIoInstance();
+    let viewersCount = 0;
+    if (io) {
+      const socketsInRoom = io.sockets.adapter.rooms.get(room);
+      if (socketsInRoom) {
+        for (const sid of socketsInRoom) {
+          const s = io.sockets.sockets.get(sid);
+          if (s?.data?.isViewer) viewersCount++;
+        }
+      }
+    }
+    io?.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
+      sessionId,
+      viewersCount,
+    } as SharedSessionViewersEvent);
+
+    socket.emit(SocketEvents.SESSION_STARTED, {
+      sessionId,
+      projectPath: sessionInfo.projectPath ?? '',
+      machineId: sessionInfo.machineId,
+      mode: sessionInfo.mode,
+      isHistory: true,
+      fromExistingSession: true,
+    });
+
+    console.log(`[Client] Viewer joined shared session: ${sessionId} (viewers: ${viewersCount})`);
+  });
+
+  // ==================== 会话历史 ====================
 
   // 会话历史列表：转发到 Agent
   socket.on(SocketEvents.LIST_SESSIONS, async (data: ListSessionsRequest) => {
@@ -687,6 +861,27 @@ export function handleClientConnection(socket: ClientSocket) {
         const sessionInfo = sessions.get(sessionId);
         if (sessionInfo && sessionInfo.clientsCount > 0) {
           sessionInfo.clientsCount--;
+        }
+
+        // 如果是 viewer 断开，广播更新后的观众数
+        if (socket.data.isViewer && sessionShareTokens.has(sessionId)) {
+          const io = getIoInstance();
+          if (io) {
+            let viewersCount = 0;
+            const socketsInRoom = io.sockets.adapter.rooms.get(room);
+            if (socketsInRoom) {
+              for (const sid of socketsInRoom) {
+                if (sid !== socket.id) {
+                  const s = io.sockets.sockets.get(sid);
+                  if (s?.data?.isViewer) viewersCount++;
+                }
+              }
+            }
+            io.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
+              sessionId,
+              viewersCount,
+            } as SharedSessionViewersEvent);
+          }
         }
       }
     });
