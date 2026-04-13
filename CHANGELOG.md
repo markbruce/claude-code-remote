@@ -32,6 +32,13 @@ All notable changes to this project will be documented in this file.
 - 修复文件上传接口缺少 Authorization 请求头导致 401 错误的问题
 - Fix agent failing to download attachments due to relative signed URLs not resolved against server URL
 - 修复 Agent 下载附件失败的问题：相对路径的签名 URL 未拼接服务器地址
+- Fix web UI stuck in "generating" state when SDK doesn't emit result message
+- 修复 SDK 未发送 result 消息时 Web UI 卡在"生成中"状态的问题
+
+### Changed / 变更
+
+- File tree now lazy-loads directories on expand instead of scanning entire project at once ([#6](https://github.com/markbruce/claude-code-remote/issues/6))
+- 文件树改为按需懒加载：展开目录时才加载子内容，而非一次性扫描整个项目
 
 ## [v1.1.2] - 2026-04-03
 
