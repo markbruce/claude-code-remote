@@ -56,6 +56,7 @@ interface SessionState {
   isResumedSession: boolean;
   fileTree: FileTreeItem[];
   isLoadingFiles: boolean;
+  loadingDirs: Set<string>; // 正在加载子目录的路径集合
   customCommands: SlashCommandItem[];
   pendingSessionRequestId: string | null; // 用于验证 SESSION_STARTED 是否是自己发起的
 
@@ -86,6 +87,7 @@ interface SessionState {
   setCurrentSession: (session: SessionInfo | null) => void;
   fetchSessionHistory: (machineId: string, projectPath: string) => void;
   fetchFileTree: (machineId: string, projectPath: string) => void;
+  expandDir: (machineId: string, projectPath: string, dirPath: string) => void;
   fetchCommands: (machineId: string, projectPath: string) => void;
   clearError: () => void;
   reset: () => void;
@@ -133,6 +135,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   isResumedSession: false,
   fileTree: [],
   isLoadingFiles: false,
+  loadingDirs: new Set(),
   customCommands: [],
   pendingSessionRequestId: null,
 
@@ -262,6 +265,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   fetchFileTree: (machineId: string, projectPath: string) => {
     set({ isLoadingFiles: true });
     socketManager.listFiles(machineId, projectPath);
+  },
+
+  // 懒加载：展开指定子目录
+  expandDir: (machineId: string, projectPath: string, dirPath: string) => {
+    const { loadingDirs } = useSessionStore.getState();
+    if (loadingDirs.has(dirPath)) return; // 防止重复请求
+    set({ loadingDirs: new Set([...loadingDirs, dirPath]) });
+    socketManager.listFiles(machineId, projectPath, dirPath);
   },
 
   // 获取斜杠命令列表
@@ -695,11 +706,37 @@ export const subscribeToSessionEvents = (): (() => void) => {
   // 文件列表
   unsubscribers.push(
     socketManager.on(SocketEvents.FILES_LIST, (data: unknown) => {
-      const typedData = data as { machine_id: string; project_path: string; files: FileTreeItem[] };
+      const typedData = data as { machine_id: string; project_path: string; dir_path?: string; files: FileTreeItem[] };
       const store = useSessionStore.getState();
       // 只处理当前会话的数据
-      if (store.currentSession?.machineId === typedData.machine_id &&
-          store.currentSession?.projectPath === typedData.project_path) {
+      if (store.currentSession?.machineId !== typedData.machine_id ||
+          store.currentSession?.projectPath !== typedData.project_path) {
+        return;
+      }
+
+      if (typedData.dir_path) {
+        // 懒加载模式：更新指定目录的 children
+        const updateChildren = (items: FileTreeItem[]): FileTreeItem[] =>
+          items.map(item => {
+            if (item.path === typedData.dir_path) {
+              return { ...item, children: typedData.files || [] };
+            }
+            if (item.children) {
+              return { ...item, children: updateChildren(item.children) };
+            }
+            return item;
+          });
+
+        const { loadingDirs } = store;
+        const next = new Set(loadingDirs);
+        next.delete(typedData.dir_path);
+
+        useSessionStore.setState({
+          fileTree: updateChildren(store.fileTree),
+          loadingDirs: next,
+        });
+      } else {
+        // 根目录模式：替换整个 fileTree
         useSessionStore.setState({
           fileTree: typedData.files || [],
           isLoadingFiles: false,

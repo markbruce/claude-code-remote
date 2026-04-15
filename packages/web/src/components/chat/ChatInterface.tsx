@@ -7,6 +7,7 @@ import { TokenUsagePanel } from './TokenUsagePanel';
 import { useChatStore } from '../../stores/chatStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { ChatMessage } from '../../stores/chatStore';
+import type { AttachmentRef } from 'cc-remote-shared';
 
 interface ChatInterfaceProps {
   sessionId: string;
@@ -42,7 +43,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
   }, []);
 
   const handleSend = useCallback(
-    (content: string) => {
+    (content: string, attachments?: AttachmentRef[]) => {
       if (content === '/clear') {
         clearMessages();
         return;
@@ -77,7 +78,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
         sendMessage(sessionId, '/compact');
         return;
       }
-      sendMessage(sessionId, content);
+      sendMessage(sessionId, content, attachments);
     },
     [sessionId, sendMessage, clearMessages, addSystemMessage, messages.length, isGenerating, t],
   );
@@ -120,6 +121,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
         isGenerating={isGenerating}
         machineId={machineId}
         projectPath={projectPath}
+        sessionId={sessionId}
       />
     </div>
   );

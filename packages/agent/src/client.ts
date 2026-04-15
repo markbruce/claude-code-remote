@@ -35,6 +35,7 @@ import {
   GitUnstageRequest,
   GitCommitRequest,
   ValidatePathRequest,
+  AttachmentRef,
 } from 'cc-remote-shared';
 import {
   getGitStatus,
@@ -50,6 +51,7 @@ import { ConfigManager } from './config';
 import { projectScanner } from './scanner';
 import { sessionManager } from './session';
 import { sdkSessionManager } from './sdk-session';
+import { DownloadedAttachment } from './sdk-session';
 
 /**
  * 客户端状态
@@ -229,6 +231,14 @@ export class AgentClient extends EventEmitter {
     // Chat 模式：权限审批回答
     this.socket.on(SocketEvents.CHAT_PERMISSION_ANSWER, (data: ChatPermissionAnswerEvent) => {
       this.handleChatPermissionAnswer(data);
+    });
+
+    // Chat 模式：中断当前查询
+    this.socket.on(SocketEvents.CHAT_ABORT, (data: { session_id: string }) => {
+      const session = sdkSessionManager.getSession(data.session_id);
+      if (session) {
+        session.abort();
+      }
     });
 
     // Shell 模式：终端 resize
@@ -619,17 +629,79 @@ export class AgentClient extends EventEmitter {
   /**
    * Chat 模式：处理用户发送消息
    */
-  private handleChatSend(data: ChatSendEvent): void {
+  private async handleChatSend(data: ChatSendEvent): Promise<void> {
     try {
       const session = sdkSessionManager.getSession(data.session_id);
-      if (session && session.isRunning()) {
-        session.sendMessage(data.content);
-      } else {
+      if (!session || !session.isRunning()) {
         console.warn(`Chat 会话不存在或未运行: ${data.session_id}`);
+        return;
       }
+
+      // Download attachments if present
+      const downloadedAttachments: DownloadedAttachment[] = [];
+      if (data.attachments?.length) {
+        const projectPath = session.getInfo().projectPath;
+        for (const att of data.attachments) {
+          try {
+            const localPath = await this.downloadAttachment(att, projectPath);
+            const fileBuffer = await fs.readFile(localPath);
+            downloadedAttachments.push({
+              fileId: att.fileId,
+              filename: att.filename,
+              mimeType: att.mimeType,
+              size: att.size,
+              localPath,
+              data: fileBuffer,
+            });
+          } catch (err) {
+            console.error(`[Agent] Failed to download attachment ${att.fileId}:`, err);
+            // Emit error but continue with other attachments
+            this.socket?.emit(SocketEvents.CHAT_MESSAGE, {
+              session_id: data.session_id,
+              type: 'assistant' as const,
+              content: `Failed to load attachment: ${att.filename}`,
+              timestamp: new Date(),
+            });
+          }
+        }
+      }
+
+      session.sendMessage(data.content, downloadedAttachments);
     } catch (error) {
       console.error('处理 Chat 消息失败:', error);
     }
+  }
+
+  private async downloadAttachment(att: AttachmentRef, projectPath: string): Promise<string> {
+    const safeFilename = path.basename(att.filename).replace(/\.\./g, '');
+    const uploadDir = path.join(projectPath, '.claude', 'uploads');
+    await fs.mkdir(uploadDir, { recursive: true });
+
+    // Place .gitignore in uploads dir
+    const gitignorePath = path.join(uploadDir, '.gitignore');
+    try {
+      await fs.access(gitignorePath);
+    } catch {
+      await fs.writeFile(gitignorePath, '*\n!.gitignore\n');
+    }
+
+    const localPath = path.join(uploadDir, `${att.fileId}_${safeFilename}`);
+
+    // Deduplicate: skip download if file already exists
+    try {
+      await fs.access(localPath);
+      return localPath;
+    } catch {}
+
+    // signedUrl is relative (e.g. /api/upload/xxx?token=...), resolve against server URL
+    const downloadUrl = att.signedUrl.startsWith('http')
+      ? att.signedUrl
+      : `${this.config.serverUrl}${att.signedUrl}`;
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await fs.writeFile(localPath, buffer);
+    return localPath;
   }
 
   /**
@@ -744,10 +816,8 @@ export class AgentClient extends EventEmitter {
       'node_modules', '.git', '.next', 'dist', 'build', '.turbo',
       '__pycache__', '.venv', 'venv', '.DS_Store', 'coverage',
     ]);
-    const MAX_DEPTH = 3;
 
-    const scan = async (dir: string, depth: number): Promise<FileTreeItem[]> => {
-      if (depth > MAX_DEPTH) return [];
+    const scanSingleLevel = async (dir: string): Promise<FileTreeItem[]> => {
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
         const items: FileTreeItem[] = [];
@@ -755,8 +825,7 @@ export class AgentClient extends EventEmitter {
           if (IGNORED.has(entry.name) || entry.name.startsWith('.')) continue;
           const fullPath = path.join(dir, entry.name);
           if (entry.isDirectory()) {
-            const children = await scan(fullPath, depth + 1);
-            items.push({ name: entry.name, path: fullPath, type: 'directory', children });
+            items.push({ name: entry.name, path: fullPath, type: 'directory' });
           } else {
             items.push({ name: entry.name, path: fullPath, type: 'file' });
           }
@@ -771,12 +840,15 @@ export class AgentClient extends EventEmitter {
       }
     };
 
+    const targetDir = data.dir_path || data.project_path;
+
     try {
-      const tree = await scan(data.project_path, 0);
+      const items = await scanSingleLevel(targetDir);
       this.socket?.emit(SocketEvents.FILES_LIST, {
         machine_id: data.machine_id,
         project_path: data.project_path,
-        files: tree,
+        dir_path: data.dir_path,
+        files: items,
         request_id: data.request_id,
       });
     } catch (error) {
@@ -784,6 +856,7 @@ export class AgentClient extends EventEmitter {
       this.socket?.emit(SocketEvents.FILES_LIST, {
         machine_id: data.machine_id,
         project_path: data.project_path,
+        dir_path: data.dir_path,
         files: [],
         request_id: data.request_id,
       });

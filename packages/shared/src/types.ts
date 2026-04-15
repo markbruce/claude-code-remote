@@ -161,9 +161,19 @@ export interface ChatMessageEvent {
   timestamp: Date;
 }
 
+/** Reference to an uploaded file attachment */
+export interface AttachmentRef {
+  fileId: string;
+  signedUrl: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatSendEvent {
   session_id: string;
   content: string;
+  attachments?: AttachmentRef[];
 }
 
 export interface ChatPermissionRequestEvent {
@@ -230,6 +240,7 @@ export interface HistoryMessage {
 export interface ListFilesRequest {
   machine_id: string;
   project_path: string;
+  dir_path?: string; // 懒加载：指定要展开的子目录路径，不传则扫描根目录
   request_id?: string;
 }
 

@@ -77,19 +77,29 @@ interface FileTreeNodeProps {
   item: FileTreeItem;
   depth: number;
   currentFile: string | null;
+  loadingDirs: Set<string>;
   onFileClick: (path: string) => void;
   onFileDoubleClick?: (path: string) => void;
+  onExpandDir: (dirPath: string) => void;
 }
 
-const FileTreeNode: React.FC<FileTreeNodeProps> = ({ item, depth, currentFile, onFileClick, onFileDoubleClick }) => {
-  const [expanded, setExpanded] = useState(depth === 0);
+const FileTreeNode: React.FC<FileTreeNodeProps> = ({ item, depth, currentFile, loadingDirs, onFileClick, onFileDoubleClick, onExpandDir }) => {
+  const [expanded, setExpanded] = useState(false);
   const isActive = currentFile === item.path;
 
+  const handleToggle = useCallback(() => {
+    if (!expanded && item.children === undefined) {
+      onExpandDir(item.path);
+    }
+    setExpanded(!expanded);
+  }, [expanded, item.path, item.children, onExpandDir]);
+
   if (item.type === 'directory') {
+    const isLoading = loadingDirs.has(item.path);
     return (
       <div>
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={handleToggle}
           className="w-full text-left flex items-center gap-1.5 py-0.5 px-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group"
           style={{ paddingLeft: `${depth * 12 + 4}px` }}
         >
@@ -105,15 +115,28 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({ item, depth, currentFile, o
             />
           </svg>
           <span className="text-gray-700 dark:text-gray-200 text-xs truncate">{item.name}</span>
+          {isLoading && (
+            <svg className="w-3 h-3 text-gray-400 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
         </button>
+        {expanded && isLoading && (
+          <div className="text-gray-400 dark:text-gray-500 text-xs text-center py-1" style={{ paddingLeft: `${(depth + 1) * 12 + 4}px` }}>
+            ...
+          </div>
+        )}
         {expanded && item.children?.map((child) => (
           <FileTreeNode
             key={child.path}
             item={child}
             depth={depth + 1}
             currentFile={currentFile}
+            loadingDirs={loadingDirs}
             onFileClick={onFileClick}
             onFileDoubleClick={onFileDoubleClick}
+            onExpandDir={onExpandDir}
           />
         ))}
       </div>
@@ -162,6 +185,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const projectName = projectPath.split(/[/\\]/).pop() || projectPath;
   const [tab, setTab] = useState<SidebarTab>('sessions');
   const { t } = useTranslation();
+
+  const loadingDirs = useSessionStore((s) => s.loadingDirs);
+  const expandDir = useSessionStore((s) => s.expandDir);
+
+  const handleExpandDir = useCallback((dirPath: string) => {
+    if (machineId && projectPath) {
+      expandDir(machineId, projectPath, dirPath);
+    }
+  }, [machineId, projectPath, expandDir]);
 
   const [showNewSessionHint, setShowNewSessionHint] = useState(false);
 
@@ -398,8 +430,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       item={item}
                       depth={0}
                       currentFile={currentFile}
+                      loadingDirs={loadingDirs}
                       onFileClick={onFileClick}
                       onFileDoubleClick={onFileDoubleClick}
+                      onExpandDir={handleExpandDir}
                     />
                   ))}
                 </div>

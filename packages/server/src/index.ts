@@ -32,6 +32,12 @@ const prisma = new PrismaClient();
 const app: Express = express();
 const httpServer = createServer(app);
 
+// Ensure upload temp directory exists
+const uploadTempDir = process.env.UPLOAD_TEMP_DIR || '/tmp/ccr-upload';
+if (!fs.existsSync(uploadTempDir)) {
+  fs.mkdirSync(uploadTempDir, { recursive: true });
+}
+
 // CORS配置
 // 开发环境和生产环境都允许所有来源（便于局域网访问和 Docker 部署）
 // 如需限制，请设置 CORS_ORIGIN 环境变量
