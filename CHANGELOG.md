@@ -34,6 +34,8 @@ All notable changes to this project will be documented in this file.
 - 修复 Agent 下载附件失败的问题：相对路径的签名 URL 未拼接服务器地址
 - Fix web UI stuck in "generating" state when SDK doesn't emit result message
 - 修复 SDK 未发送 result 消息时 Web UI 卡在"生成中"状态的问题
+- Fix content missing after tool execution: handle text blocks in `assistant` messages and prevent double `complete` emission ([#13](https://github.com/markbruce/claude-code-remote/issues/13))
+- 修复工具执行后内容丢失：处理 `assistant` 消息中的 text 块，防止 `complete` 事件重复发送清空 tokenUsage
 
 ### Changed / 变更
 
