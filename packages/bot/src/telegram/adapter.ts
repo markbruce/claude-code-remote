@@ -50,28 +50,37 @@ export class TelegramAdapter implements BotPlatform {
     });
   }
 
-  async sendMessage(chatId: string, content: MessageContent): Promise<void> {
+  async sendMessage(chatId: string, content: MessageContent): Promise<number | undefined> {
     try {
-      await this.bot.api.sendMessage(chatId, content.text, {
+      const result = await this.bot.api.sendMessage(chatId, content.text, {
         parse_mode: content.parseMode === 'Markdown' ? 'MarkdownV2' : undefined,
       });
+      return result.message_id;
     } catch (error) {
       console.error(`[Telegram] Send error to ${chatId}:`, error);
       // Retry without parse_mode on formatting error
       if (content.parseMode) {
         try {
-          await this.bot.api.sendMessage(chatId, content.text);
+          const result = await this.bot.api.sendMessage(chatId, content.text);
+          return result.message_id;
         } catch { /* give up */ }
       }
     }
+    return undefined;
   }
 
-  async editMessage(chatId: string, messageId: number, content: MessageContent): Promise<void> {
+  async editMessage(chatId: string, messageId: number, content: MessageContent): Promise<boolean> {
     try {
       await this.bot.api.editMessageText(chatId, messageId, content.text, {
         parse_mode: content.parseMode === 'Markdown' ? 'MarkdownV2' : undefined,
       });
-    } catch { /* ignore edit errors (message unchanged, etc.) */ }
+      return true;
+    } catch (err: any) {
+      // "message is not modified" is benign — content unchanged
+      if (err?.description?.includes('message is not modified')) return true;
+      console.error(`[Telegram] Edit error for msg ${messageId}:`, err?.message || err);
+      return false;
+    }
   }
 
   async sendPermission(chatId: string, request: PermissionRequest): Promise<void> {

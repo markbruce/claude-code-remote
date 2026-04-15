@@ -26,11 +26,11 @@ export interface BotPlatform {
   /** Start the platform adapter (connect, register commands, etc.) */
   start(): Promise<void>;
 
-  /** Send a text message to a chat */
-  sendMessage(chatId: string, content: MessageContent): Promise<void>;
+  /** Send a text message to a chat. Returns the platform message ID. */
+  sendMessage(chatId: string, content: MessageContent): Promise<number | undefined>;
 
-  /** Edit an existing message (for streaming) */
-  editMessage(chatId: string, messageId: number, content: MessageContent): Promise<void>;
+  /** Edit an existing message (for streaming). Returns true if edit succeeded. */
+  editMessage(chatId: string, messageId: number, content: MessageContent): Promise<boolean>;
 
   /** Send a permission approval prompt with buttons */
   sendPermission(chatId: string, request: PermissionRequest): Promise<void>;
