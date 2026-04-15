@@ -5,7 +5,7 @@
 import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout, AuthGuard } from './components';
-import { LoginPage, MachinesPage, ProjectsPage, SessionPage } from './pages';
+import { LoginPage, MachinesPage, ProjectsPage, SessionPage, BindBotPage } from './pages';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { useAuthStore } from './stores';
 
@@ -23,6 +23,9 @@ const App: React.FC = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+
+        {/* Bot binding pages (Telegram, Feishu) */}
+        <Route path="/bind-:platform" element={<BindBotPage />} />
 
         <Route
           path="/"

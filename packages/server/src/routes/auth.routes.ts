@@ -344,6 +344,110 @@ router.post('/bind-telegram', authMiddleware, async (req: Request, res: Response
 });
 
 /**
+ * POST /api/auth/bind-feishu
+ * 绑定飞书账号到当前用户
+ */
+router.post('/bind-feishu', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const bindSchema = z.object({
+      token: z.string().min(1, '缺少bind token'),
+      platform_user_id: z.string().min(1, '缺少platform_user_id'),
+      chat_id: z.string().min(1, '缺少chat_id'),
+    });
+    const validationResult = bindSchema.safeParse(req.body);
+    if (!validationResult.success) {
+      res.status(HTTP_STATUS.BAD_REQUEST).json({
+        error: ERROR_MESSAGES.INVALID_INPUT,
+        details: validationResult.error.errors,
+      });
+      return;
+    }
+
+    const { token, platform_user_id, chat_id } = validationResult.data;
+    const userId = req.user!.id;
+
+    // 验证bind token：调用Bot服务的verify接口
+    const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:3001';
+    try {
+      const verifyRes = await fetch(
+        `${BOT_SERVICE_URL}/api/bind/verify?token=${encodeURIComponent(token)}`
+      );
+      if (!verifyRes.ok) {
+        res.status(HTTP_STATUS.BAD_REQUEST).json({
+          error: '绑定失败',
+          message: 'Bind token验证失败',
+        });
+        return;
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[Auth] Bot service unreachable during bind verification:', err);
+        res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+          error: '绑定失败',
+          message: 'Bot服务不可达',
+        });
+        return;
+      }
+      console.warn('[Auth] Bot service unreachable, skipping bind token verification (dev mode)');
+    }
+
+    const refresh_secret = crypto.randomBytes(32).toString('hex');
+
+    await prisma.botBinding.upsert({
+      where: {
+        platform_platform_user_id: {
+          platform: 'feishu',
+          platform_user_id,
+        },
+      },
+      update: {
+        user_id: userId,
+        chat_id,
+        refresh_secret,
+      },
+      create: {
+        user_id: userId,
+        platform: 'feishu',
+        platform_user_id,
+        chat_id,
+        refresh_secret,
+      },
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      res.status(HTTP_STATUS.NOT_FOUND).json({
+        error: '用户不存在',
+      });
+      return;
+    }
+
+    const jwt = generateToken({
+      userId: user.id,
+      email: user.email,
+    });
+
+    console.log(`[Auth] Feishu bound for user: ${user.email}, platform_user_id: ${platform_user_id}`);
+
+    res.status(HTTP_STATUS.OK).json({
+      success: true,
+      jwt,
+      refresh_secret,
+      user: formatUserResponse(user),
+    });
+  } catch (error) {
+    console.error('[Auth] Bind feishu error:', error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      error: '绑定失败',
+      message: '服务器内部错误',
+    });
+  }
+});
+
+/**
  * POST /api/auth/bot-token
  * Bot服务刷新JWT（无需认证中间件）
  */
