@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Remotely control Claude Code on any PC from your phone or browser**
+**Remotely control Claude Code on any PC from your phone, browser, or Telegram**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
@@ -179,6 +179,15 @@ This project supports both **npm** and **pnpm**:
 - 🔄 **Real-time Communication** — Socket.io bidirectional communication with separated Agent/Client namespaces
 - 🛡️ **Security** — Rate limiting, password hashing, input validation
 
+### Telegram Bot
+
+- 🤖 **Telegram Integration** — Full-featured Telegram bot (`@CCRDevBot`) for remote Claude Code access
+- 🔗 **Account Binding** — One-click bind via deep link, web-based OAuth flow
+- 📋 **InlineKeyboard** — Tap-to-select machines, projects, and sessions
+- 💬 **Chat & Streaming** — Send messages to Claude with real-time streaming output
+- 📜 **Session Management** — Browse history, resume past sessions, view conversation records
+- 🛑 **Abort Control** — `/stop` to interrupt running Claude responses
+
 ### Technical Highlights
 
 - **Monorepo Architecture** — Turborepo + pnpm workspace, shared types, independent builds
@@ -197,12 +206,18 @@ This project supports both **npm** and **pnpm**:
 │ Client      │◄────────►│   Server     │◄────────►│ PC Agent    │
 │ (Web/PWA)   │ Socket.io│ (Express)    │ Socket.io │             │
 └─────────────┘   +JWT   └──────────────┘   +JWT   └─────────────┘
-                               │                        │
-                               ▼                        ▼
-                        ┌──────────────┐         ┌─────────────┐
-                        │   SQLite     │         │ Claude Code │
-                        │ (Prisma ORM) │         │  Process    │
-                        └──────────────┘         └─────────────┘
+                               ▲                        │
+                               │                        ▼
+┌─────────────┐               │                 ┌─────────────┐
+│ Telegram    │◄──────────────┘                 │ Claude Code │
+│ Bot         │ Socket.io                       │  Process    │
+└─────────────┘                                 └─────────────┘
+       │
+       ▼
+┌──────────────┐
+│   SQLite     │
+│ (Session)    │
+└──────────────┘
 ```
 
 ### Tech Stack
@@ -212,6 +227,7 @@ This project supports both **npm** and **pnpm**:
 | **Server** | Node.js + Express + Socket.io + Prisma + tsx watch |
 | **Agent** | Node.js + Commander + Socket.io-client + Claude Agent SDK |
 | **Web** | React + Vite + Tailwind + xterm.js + Zustand |
+| **Bot** | Node.js + grammy + Socket.io-client + better-sqlite3 |
 | **Database** | SQLite + Prisma ORM |
 | **Auth** | JWT + bcrypt |
 | **Chat Rendering** | react-markdown + remark-gfm + react-syntax-highlighter |
@@ -272,12 +288,18 @@ npm run dev:web
 npm run build:agent
 cd packages/agent
 node dist/index.js
+
+# Terminal 4 (optional): Build and start Telegram bot
+pnpm --filter cc-remote-bot build
+cd packages/bot
+node dist/index.js
 ```
 
 6. **Access the app**
 - Web UI: http://localhost:5173
 - Server API: http://localhost:3000
 - Health check: http://localhost:3000/health
+- Telegram Bot: Send `/start` to your bot
 
 ---
 
@@ -361,6 +383,19 @@ claude-code-remote/
 │   │       ├── sdk-session.ts     # Claude Agent SDK session management (Chat mode)
 │   │       └── scanner.ts         # Project directory scanning
 │   │
+│   └── bot/                 # Telegram / IM bot
+│       └── src/
+│           ├── index.ts           # HTTP server + entry point
+│           ├── core/
+│           │   ├── bridge.ts      # Orchestrator (commands → Socket.IO)
+│           │   ├── socket-client.ts # Socket.IO client to server
+│           │   └── session-store.ts # SQLite session persistence
+│           ├── telegram/
+│           │   ├── adapter.ts     # grammy bot adapter
+│           │   ├── handlers.ts    # Command handlers
+│           │   └── commands.ts    # Bot command definitions
+│           └── shared/
+│               └── platform.ts    # Platform interface (BotPlatform)
 │   └── web/                 # React Web UI
 │       └── src/
 │           ├── components/
@@ -428,6 +463,7 @@ cc-agent --config-dir ~/.cc-agent-2  # Specify config directory (multi-instance)
 - [x] **Slash Commands** — `/` command panel with built-in commands + model switching + Skills + Plugins
 - [x] **File Explorer** — Sidebar file tree with recursive directory display
 - [x] **Dev Experience** — tsx watch hot reload, automatic port recycling, graceful restart
+- [x] **Telegram Bot** — Full-featured Telegram bot with InlineKeyboard, streaming, session management
 
 ### Planned
 
@@ -477,6 +513,7 @@ This project was inspired by and references the following open-source projects:
 - **[Vite](https://vitejs.dev/)** — Build tool
 - **[xterm.js](https://xtermjs.org/)** — Terminal emulator
 - **[Zustand](https://github.com/pmndrs/zustand)** — State management
+- **[grammy](https://grammy.dev/)** — Telegram Bot framework
 - **[@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)** — Claude Agent SDK
 
 ---
