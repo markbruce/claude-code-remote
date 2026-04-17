@@ -110,7 +110,7 @@ export const BindBotPage: React.FC = () => {
     setErrorMsg('');
 
     try {
-      const result = await apiClient.post(config.apiEndpoint, {
+      const result = await apiClient.post<{ jwt: string; refresh_secret: string }>(config.apiEndpoint, {
         token: bindToken,
         platform_user_id: platformUserId,
         chat_id: chatId,
