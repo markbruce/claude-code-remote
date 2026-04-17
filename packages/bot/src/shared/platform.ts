@@ -22,6 +22,11 @@ export interface BotCommand {
   description: string;
 }
 
+export interface InlineButton {
+  text: string;
+  callbackData: string;
+}
+
 export interface BotPlatform {
   /** Start the platform adapter (connect, register commands, etc.) */
   start(): Promise<void>;
@@ -37,6 +42,9 @@ export interface BotPlatform {
 
   /** Register bot commands with the platform */
   registerCommands(commands: BotCommand[]): Promise<void>;
+
+  /** Send a message with inline keyboard buttons */
+  sendInlineButtons(chatId: string, text: string, buttons: InlineButton[]): Promise<void>;
 
   /** Register handler for incoming text messages */
   onMessage(handler: (chatId: string, text: string) => void): void;

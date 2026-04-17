@@ -25,7 +25,8 @@ const App: React.FC = () => {
         <Route path="/login" element={<LoginPage />} />
 
         {/* Bot binding pages (Telegram, Feishu) */}
-        <Route path="/bind-:platform" element={<BindBotPage />} />
+        <Route path="/bind-telegram" element={<BindBotPage />} />
+        <Route path="/bind-feishu" element={<BindBotPage />} />
 
         <Route
           path="/"

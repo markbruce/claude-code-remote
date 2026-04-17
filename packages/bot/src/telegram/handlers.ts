@@ -74,13 +74,13 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
     }
   });
 
-  // /use — Select machine
+  // /use — Select machine (by name or number index)
   bot.command('use', async (ctx) => {
     const chatId = String(ctx.chat.id);
-    const name = ctx.match?.trim();
+    const arg = ctx.match?.trim();
 
-    if (!name) {
-      await ctx.reply('Usage: /use <machine-name>');
+    if (!arg) {
+      await ctx.reply('Usage: /use <number-or-name>');
       return;
     }
 
@@ -90,22 +90,27 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
       return;
     }
 
-    // Look up machine by name from cached machines list
-    // The bridge stores the last MACHINES_LIST response per chatId
     const machines = bridge.cachedMachines.get(chatId);
     if (!machines) {
       await ctx.reply('Machine list not loaded. Use /machines first.');
       return;
     }
-    const machine = machines.find((m: any) => m.name === name || m.name.toLowerCase().includes(name.toLowerCase()));
+
+    let machine: any;
+    const idx = parseInt(arg, 10) - 1; // 1-based to 0-based
+    if (!isNaN(idx) && idx >= 0 && idx < machines.length) {
+      machine = machines[idx];
+    } else {
+      machine = machines.find((m: any) => m.name === arg || m.name.toLowerCase().includes(arg.toLowerCase()));
+    }
+
     if (!machine) {
-      await ctx.reply(`Machine "${name}" not found. Use /machines to see available machines.`);
+      await ctx.reply(`Machine "${arg}" not found. Use /machines to see available machines.`);
       return;
     }
 
-    const found = machine as any;
-    bridge.sessions.updateMachine(chatId, found.id, found.name);
-    await ctx.reply(`🖥 Machine selected: ${found.name} (${found.hostname})\nUse /projects to see available projects.`);
+    bridge.sessions.updateMachine(chatId, machine.id, machine.name);
+    await ctx.reply(`🖥 Machine selected: ${machine.name} (${machine.hostname})\nUse /projects to see available projects.`);
   });
 
   // /projects — List projects
@@ -124,13 +129,13 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
     });
   });
 
-  // /cd — Select project
+  // /cd — Select project (by path or number index)
   bot.command('cd', async (ctx) => {
     const chatId = String(ctx.chat.id);
-    const path = ctx.match?.trim();
+    const arg = ctx.match?.trim();
 
-    if (!path) {
-      await ctx.reply('Usage: /cd <project-path>');
+    if (!arg) {
+      await ctx.reply('Usage: /cd <number-or-path>');
       return;
     }
 
@@ -140,49 +145,81 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
       return;
     }
 
-    bridge.sessions.updateProject(chatId, path);
-    await ctx.reply(`📂 Project set to: ${path}\nUse /chat <message> to start talking to Claude.`);
+    // Try number index from cached projects
+    const projects = bridge.cachedProjects.get(chatId);
+    if (projects && projects.length > 0) {
+      const idx = parseInt(arg, 10) - 1;
+      if (!isNaN(idx) && idx >= 0 && idx < projects.length) {
+        const project = projects[idx] as any;
+        bridge.sessions.updateProject(chatId, project.path);
+        await ctx.reply(`📂 Project set to: ${project.path}\nUse /history to resume a session, or just type a message to start chatting with Claude.`);
+        return;
+      }
+    }
+
+    // Fallback: treat as path
+    bridge.sessions.updateProject(chatId, arg);
+    await ctx.reply(`📂 Project set to: ${arg}\nUse /history to resume a session, or just type a message to start chatting with Claude.`);
   });
 
-  // /chat — Start or continue chat session
+  // /chat — Send message to Claude (also works by just typing text directly)
   bot.command('chat', async (ctx) => {
     const chatId = String(ctx.chat.id);
     const message = ctx.match?.trim();
 
     if (!message) {
-      await ctx.reply('Usage: /chat <your message>');
+      await ctx.reply('💡 You can just type your message directly — no need for /chat.\nOr use /chat <message> to be explicit.');
       return;
     }
 
-    const session = bridge.sessions.getByPlatformUserId(chatId);
-    if (!session?.machine_id || !session?.project_path) {
-      await ctx.reply('Set up a machine and project first. Use /machines and /cd');
-      return;
-    }
-
-    // If no active session, start one
-    if (!session.session_id) {
-      bridge.pendingMessages.set(chatId, message); // Store message to send after session starts
-      bridge.sockets.emit(chatId, SocketEvents.START_SESSION, {
-        machine_id: session.machine_id,
-        project_path: session.project_path,
-        mode: 'chat',
-        request_id: `req-${Date.now()}`,
-      });
-    } else {
-      // Send to existing session
-      bridge.sockets.emit(chatId, SocketEvents.CHAT_SEND, {
-        session_id: session.session_id,
-        content: message,
-      });
-    }
+    // Delegate to bridge.handleMessage (same as direct text)
+    bridge.handleMessagePublic(chatId, message);
   });
 
-  // /new — Start new session
+  // /new — Clear session, start fresh
   bot.command('new', async (ctx) => {
     const chatId = String(ctx.chat.id);
+    const session = bridge.sessions.getByPlatformUserId(chatId);
+    if (session?.session_id) {
+      // Abort any running session
+      bridge.sockets.emit(chatId, SocketEvents.CHAT_ABORT, { session_id: session.session_id });
+    }
     bridge.sessions.resetSession(chatId);
-    await ctx.reply('🔄 Previous session cleared. Use /chat <message> to start a new session.');
+    await ctx.reply('🔄 Session cleared. Just type a message to start a new one.');
+  });
+
+  // /stop — Abort current Claude response (keep session alive)
+  bot.command('stop', async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    const session = bridge.sessions.getByPlatformUserId(chatId);
+    if (!session?.session_id) {
+      await ctx.reply('No active session to stop.');
+      return;
+    }
+    bridge.sockets.emit(chatId, SocketEvents.CHAT_ABORT, { session_id: session.session_id });
+    await ctx.reply('⏹ Stopped.');
+  });
+
+  // /status — Show current state
+  bot.command('status', async (ctx) => {
+    const chatId = String(ctx.chat.id);
+    const session = bridge.sessions.getByPlatformUserId(chatId);
+
+    if (!session || session.state === 'unbound') {
+      await ctx.reply('❌ Not bound. Use /start to bind your account.');
+      return;
+    }
+
+    const lines = [
+      `📊 **Current State**`,
+      `  Account: ✅ Bound`,
+      `  Machine: ${session.machine_name || '❌ Not selected'}`,
+      `  Project: ${session.project_path || '❌ Not selected'}`,
+      `  Session: ${session.session_id ? '✅ Active' : '❌ None'}`,
+      `  State: ${session.state}`,
+      `  Connected: ${bridge.sockets.emit(chatId, 'ping', {}) ? '✅' : '❌'}`,
+    ];
+    await ctx.reply(lines.join('\n'));
   });
 
   // /history — List sessions
@@ -200,12 +237,5 @@ export function registerHandlers(bot: Bot, bridge: Bridge): void {
       project_path: session.project_path,
       request_id: `req-${Date.now()}`,
     });
-  });
-
-  // /cancel — Cancel current operation
-  bot.command('cancel', async (ctx) => {
-    const chatId = String(ctx.chat.id);
-    bridge.sessions.resetSession(chatId);
-    await ctx.reply('✅ Cancelled.');
   });
 }

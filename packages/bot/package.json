@@ -6,13 +6,13 @@
     "cc-bot": "./dist/index.js"
   },
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "dev": "concurrently \"tsc -w --preserveWatchOutput\" \"nodemon --watch dist dist/index.js\"",
     "build": "tsc",
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "cc-remote-shared": "workspace:*",
     "better-sqlite3": "^11.7.0",
+    "cc-remote-shared": "workspace:*",
     "commander": "^12.1.0",
     "grammy": "^1.34.0",
     "socket.io-client": "^4.8.1"
@@ -20,6 +20,8 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.14.10",
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.14",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.7.3"
   }

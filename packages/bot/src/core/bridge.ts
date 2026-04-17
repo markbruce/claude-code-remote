@@ -32,6 +32,8 @@ export class Bridge {
   readonly platform: BotPlatform;
   readonly config: BotConfig;
   readonly cachedMachines = new Map<string, unknown[]>();  // chatId → last machines list
+  readonly cachedProjects = new Map<string, unknown[]>();  // chatId → last projects list
+  readonly cachedSessions = new Map<string, unknown[]>();  // chatId → last sessions list
   readonly pendingMessages = new Map<string, string>();      // chatId → message to send after session starts
   private streamingStates = new Map<string, StreamingState>(); // chatId → streaming state
 
@@ -73,16 +75,39 @@ export class Bridge {
   /**
    * Handle incoming text message from platform.
    */
+  /** Public wrapper for /chat command to reuse handleMessage */
+  handleMessagePublic(chatId: string, text: string): void {
+    this.handleMessage(chatId, text);
+  }
+
   private async handleMessage(chatId: string, text: string): Promise<void> {
     const session = this.sessions.getByPlatformUserId(chatId);
 
-    // Commands are handled by telegram/handlers.ts — this is for chat messages only
-    if (!session || session.state !== 'in_session' || !session.session_id) {
-      this.platform.sendMessage(chatId, { text: 'No active session. Use /chat <message> to start one.' });
+    // Not bound yet
+    if (!session || session.state === 'unbound') {
+      this.platform.sendMessage(chatId, { text: 'Please bind your account first with /start' });
       return;
     }
 
-    // Send message to Claude via Socket.IO
+    // No machine/project selected
+    if (!session.machine_id || !session.project_path) {
+      this.platform.sendMessage(chatId, { text: 'Set up a machine and project first. Use /machines and /cd' });
+      return;
+    }
+
+    // If no active session, auto-start one with the user's message
+    if (!session.session_id) {
+      this.pendingMessages.set(chatId, text);
+      this.sockets.emit(chatId, SocketEvents.START_SESSION, {
+        machine_id: session.machine_id,
+        project_path: session.project_path,
+        mode: 'chat',
+        request_id: `req-${Date.now()}`,
+      });
+      return;
+    }
+
+    // Send message to active Claude session via Socket.IO
     this.sockets.emit(chatId, SocketEvents.CHAT_SEND, {
       session_id: session.session_id,
       content: text,
@@ -93,26 +118,92 @@ export class Bridge {
    * Handle callback (button press) from platform.
    */
   private async handleCallback(chatId: string, action: string, data: string): Promise<void> {
-    const callbackKey = parseInt(data, 10);
-    if (isNaN(callbackKey)) return;
+    // Permission approve/deny
+    if (action === 'approve' || action === 'deny') {
+      const callbackKey = parseInt(data, 10);
+      if (isNaN(callbackKey)) return;
 
-    const approved = action === 'approve';
-    const pending = this.permissions.resolve(callbackKey, approved);
+      const approved = action === 'approve';
+      const pending = this.permissions.resolve(callbackKey, approved);
 
-    if (!pending) {
-      this.platform.sendMessage(chatId, { text: 'Permission request expired or unknown.' });
+      if (!pending) {
+        this.platform.sendMessage(chatId, { text: 'Permission request expired or unknown.' });
+        return;
+      }
+
+      this.sockets.emit(chatId, SocketEvents.CHAT_PERMISSION_ANSWER, {
+        session_id: pending.sessionId,
+        requestId: pending.requestId,
+        approved,
+      });
+
+      this.platform.sendMessage(chatId, {
+        text: approved ? `✅ Approved: ${pending.toolName}` : `❌ Denied: ${pending.toolName}`,
+      });
       return;
     }
 
-    this.sockets.emit(chatId, SocketEvents.CHAT_PERMISSION_ANSWER, {
-      session_id: pending.sessionId,
-      requestId: pending.requestId,
-      approved,
-    });
+    // Machine selection
+    if (action === 'machine') {
+      const machines = this.cachedMachines.get(chatId);
+      const idx = parseInt(data, 10);
+      if (!machines || isNaN(idx) || idx < 0 || idx >= machines.length) {
+        this.platform.sendMessage(chatId, { text: 'Machine not found. Use /machines first.' });
+        return;
+      }
+      const machine = machines[idx] as any;
+      this.sessions.updateMachine(chatId, machine.id, machine.name);
+      this.platform.sendMessage(chatId, { text: `🖥 Machine selected: ${machine.name} (${machine.hostname})\nUse /projects to see available projects.` });
+      return;
+    }
 
-    this.platform.sendMessage(chatId, {
-      text: approved ? `✅ Approved: ${pending.toolName}` : `❌ Denied: ${pending.toolName}`,
-    });
+    // Project selection
+    if (action === 'project') {
+      const projects = this.cachedProjects.get(chatId);
+      const idx = parseInt(data, 10);
+      if (!projects || isNaN(idx) || idx < 0 || idx >= projects.length) {
+        this.platform.sendMessage(chatId, { text: 'Project not found. Use /projects first.' });
+        return;
+      }
+      const project = projects[idx] as any;
+      this.sessions.updateProject(chatId, project.path);
+      this.platform.sendMessage(chatId, { text: `📂 Project set to: ${project.path}\nUse /history to resume a session, or just type a message to start chatting with Claude.` });
+      return;
+    }
+
+    // Session resume
+    if (action === 'session') {
+      const sessions = this.cachedSessions.get(chatId);
+      const idx = parseInt(data, 10);
+      if (!sessions || isNaN(idx) || idx < 0 || idx >= sessions.length) {
+        this.platform.sendMessage(chatId, { text: 'Session not found. Use /history first.' });
+        return;
+      }
+      const session = sessions[idx] as any;
+      const userSession = this.sessions.getByPlatformUserId(chatId);
+      if (!userSession?.machine_id || !userSession?.project_path) {
+        this.platform.sendMessage(chatId, { text: 'Set up a machine and project first.' });
+        return;
+      }
+      // Resume the session
+      this.sessions.updateSession(chatId, session.sdkSessionId);
+      this.sockets.emit(chatId, SocketEvents.START_SESSION, {
+        machine_id: userSession.machine_id,
+        project_path: userSession.project_path,
+        mode: 'chat',
+        options: { resume: session.sdkSessionId },
+        request_id: `req-${Date.now()}`,
+      });
+      // Fetch last 10 messages as context
+      this.sockets.emit(chatId, SocketEvents.GET_SESSION_MESSAGES, {
+        machine_id: userSession.machine_id,
+        project_path: userSession.project_path,
+        sdk_session_id: session.sdkSessionId,
+        limit: 10,
+        request_id: `req-${Date.now()}`,
+      });
+      return;
+    }
   }
 
   /**
@@ -121,10 +212,19 @@ export class Bridge {
   connectUser(platformUserId: string, jwt: string): void {
     const handlers: SocketEventHandlers = {
       onMachinesList: (data) => {
-        // Cache machines for /use command lookup
         this.cachedMachines.set(platformUserId, data.machines);
-        const text = `🖥 Machines:\n${data.machines.map((m: any, i: number) => `${i + 1}. ${m.name} (${m.hostname})`).join('\n')}`;
-        this.platform.sendMessage(platformUserId, { text });
+        if (data.machines.length === 0) {
+          this.platform.sendMessage(platformUserId, { text: '🖥 No machines online.' });
+          return;
+        }
+        const listText = data.machines
+          .map((m: any, i: number) => `${i + 1}. ${m.name} (${m.hostname})`)
+          .join('\n');
+        const buttons = data.machines.map((m: any, i: number) => ({
+          text: `${i + 1}. ${m.name}`,
+          callbackData: `machine:${i}`,
+        }));
+        this.platform.sendInlineButtons(platformUserId, `🖥 Machines:\n${listText}`, buttons);
       },
       onSessionStarted: (data) => {
         this.sessions.updateSession(platformUserId, data.sessionId);
@@ -141,55 +241,89 @@ export class Bridge {
       },
       onProjectsList: (data) => {
         const projects = (data as any).projects || [];
-        const text = projects.length === 0
-          ? '📂 No projects found.'
-          : `📂 Projects:\n${projects.map((p: any, i: number) => `${i + 1}. ${p.name || p.path}`).join('\n')}`;
-        this.platform.sendMessage(platformUserId, { text });
+        this.cachedProjects.set(platformUserId, projects);
+        if (projects.length === 0) {
+          this.platform.sendMessage(platformUserId, { text: '📂 No projects found.' });
+          return;
+        }
+        // Numbered text list for reference
+        const listText = projects
+          .map((p: any, i: number) => `${i + 1}. ${p.name || p.path}`)
+          .join('\n');
+        const buttons = projects.map((p: any, i: number) => {
+          const label = (p.name || p.path || `Project ${i + 1}`);
+          const truncated = label.length > 25 ? label.substring(0, 22) + '...' : label;
+          return {
+            text: `${i + 1}. ${truncated}`,
+            callbackData: `project:${i}`,
+          };
+        });
+        this.platform.sendInlineButtons(platformUserId, `📂 Projects:\n${listText}`, buttons);
       },
       onSessionsList: (data) => {
         const sessions = (data as any).sessions || [];
-        const text = sessions.length === 0
-          ? '📋 No historical sessions.'
-          : `📋 Sessions:\n${sessions.map((s: any, i: number) => `${i + 1}. ${s.id} (${s.mode || 'chat'})`).join('\n')}`;
-        this.platform.sendMessage(platformUserId, { text });
+        this.cachedSessions.set(platformUserId, sessions);
+        if (sessions.length === 0) {
+          this.platform.sendMessage(platformUserId, { text: '📋 No historical sessions.' });
+          return;
+        }
+        const listText = sessions
+          .map((s: any, i: number) => {
+            const summary = s.summary || s.firstPrompt || s.sdkSessionId || `Session ${i + 1}`;
+            const truncated = summary.length > 40 ? summary.substring(0, 37) + '...' : summary;
+            return `${i + 1}. ${truncated}`;
+          })
+          .join('\n');
+        const buttons = sessions.map((s: any, i: number) => {
+          const label = (s.summary || s.firstPrompt || `Session ${i + 1}`);
+          const truncated = label.length > 25 ? label.substring(0, 22) + '...' : label;
+          return {
+            text: `${i + 1}. ${truncated}`,
+            callbackData: `session:${i}`,
+          };
+        });
+        this.platform.sendInlineButtons(platformUserId, `📋 Sessions:\n${listText}`, buttons);
       },
       onChatMessage: (data) => {
         if (data.type === 'text') {
-          // Initial text event — send new message, start streaming state
-          const content = data.content ?? '';
-          this.platform.sendMessage(platformUserId, { text: content || '...' }).then((msgId) => {
-            this.streamingStates.set(platformUserId, {
-              messageId: msgId,
-              accumulated: content,
-              lastEditAt: 0,
-              lastEditText: content,
-              editCount: 0,
-              windowStart: Date.now(),
-            });
+          // Agent sends 'text' event with empty content as streaming start marker
+          // Real content arrives via 'text_delta' events
+          console.log(`[Bridge] text event: ${(data.content ?? '').length} chars — initializing streaming state`);
+          this.streamingStates.set(platformUserId, {
+            messageId: undefined,  // No message yet — will be created on first delta
+            accumulated: '',
+            lastEditAt: 0,
+            lastEditText: '',
+            editCount: 0,
+            windowStart: Date.now(),
           });
         } else if (data.type === 'text_delta') {
-          // Streaming delta — edit existing message
+          // Streaming delta — accumulate and periodically edit message
           const delta = data.content ?? '';
           this.handleTextDelta(platformUserId, delta);
         }
       },
       onChatToolUse: (data) => {
-        // Finalize any active streaming message before showing tool use
-        this.finalizeStreaming(platformUserId);
+        // Don't finalize streaming — Claude may continue producing text after tool use.
+        // The tool use notification is sent as a separate inline message without breaking the stream.
         if (data.toolName) {
-          const text = `🔧 **${data.toolName}**\n\`\`\`\n${data.toolInput || ''}\n\`\`\``;
-          this.platform.sendMessage(platformUserId, { text, parseMode: 'Markdown' });
+          const input = typeof data.toolInput === 'string'
+            ? data.toolInput
+            : JSON.stringify(data.toolInput || {});
+          // Truncate long input
+          const preview = input.length > 300 ? input.substring(0, 297) + '...' : input;
+          this.platform.sendMessage(platformUserId, { text: `🔧 ${data.toolName}\n${preview}` });
         }
       },
       onChatToolResult: (data) => {
+        // Don't finalize streaming — just show tool result as an inline notification.
         if (data.toolResult) {
-          const chunks = splitContent(data.toolResult);
-          for (const chunk of chunks) {
-            this.platform.sendMessage(platformUserId, {
-              text: chunk.isCodeBlock ? chunk.text : `\`\`\`\n${chunk.text}\n\`\`\``,
-              parseMode: 'Markdown',
-            });
-          }
+          const result = typeof data.toolResult === 'string'
+            ? data.toolResult
+            : JSON.stringify(data.toolResult);
+          // Truncate to fit Telegram message limit
+          const text = result.length > 3500 ? result.substring(0, 3497) + '...' : result;
+          this.platform.sendMessage(platformUserId, { text });
         }
       },
       onChatPermissionRequest: (data) => {
@@ -210,9 +344,9 @@ export class Bridge {
         } as any);
       },
       onChatComplete: () => {
+        // Claude finished one response — finalize streaming and show brief done marker
         this.finalizeStreaming(platformUserId);
-        this.sessions.resetSession(platformUserId);
-        this.platform.sendMessage(platformUserId, { text: '📋 Session ended.' });
+        this.platform.sendMessage(platformUserId, { text: '✅' });
       },
       onChatError: (data) => {
         this.platform.sendMessage(platformUserId, { text: `⚠️ Error: ${data.content || 'Unknown error'}` });
@@ -220,6 +354,33 @@ export class Bridge {
       onSessionEnd: () => {
         this.sessions.resetSession(platformUserId);
         this.platform.sendMessage(platformUserId, { text: '📋 Session ended by agent.' });
+      },
+      onSessionMessages: (data) => {
+        const messages = (data.messages || []) as any[];
+        if (messages.length === 0) {
+          this.platform.sendMessage(platformUserId, { text: '📭 No messages in this session.' });
+          return;
+        }
+        // Send a condensed history summary
+        let history = `📜 Session History (${messages.length} messages):\n━━━━━━━━━━━━━\n`;
+        for (const msg of messages) {
+          const role = msg.role === 'user' ? '👤' : '🤖';
+          const content = (msg.content || '');
+          // Truncate long messages
+          const text = typeof content === 'string'
+            ? (content.length > 200 ? content.substring(0, 197) + '...' : content)
+            : JSON.stringify(content).substring(0, 200);
+          history += `${role} ${text}\n\n`;
+          // Telegram message limit is 4096 chars — split if needed
+          if (history.length > 3800) {
+            this.platform.sendMessage(platformUserId, { text: history });
+            history = '';
+          }
+        }
+        if (history) {
+          this.platform.sendMessage(platformUserId, { text: history });
+        }
+        this.platform.sendMessage(platformUserId, { text: '💡 Just type a message to continue this session.' });
       },
       onError: (data) => {
         this.platform.sendMessage(platformUserId, { text: `❌ ${data.message}` });
@@ -236,7 +397,6 @@ export class Bridge {
   private handleTextDelta(chatId: string, delta: string): void {
     let state = this.streamingStates.get(chatId);
     if (!state) {
-      // No initial 'text' event received yet — create state and send initial message
       state = {
         messageId: undefined,
         accumulated: '',
@@ -250,8 +410,42 @@ export class Bridge {
 
     state.accumulated += delta;
 
-    // If message ID not yet available (initial sendMessage still pending), skip
-    if (state.messageId === undefined) return;
+    // No message created yet — send initial message with accumulated content
+    if (state.messageId === undefined) {
+      // Wait until we have some meaningful content before creating the message
+      if (state.accumulated.length < 10 && state.accumulated.length < delta.length * 3) return;
+
+      const displayText = state.accumulated.length > STREAM_CHUNK_LIMIT
+        ? state.accumulated.substring(0, STREAM_CHUNK_LIMIT)
+        : state.accumulated;
+
+      // Mark as pending immediately to prevent duplicate sends from concurrent deltas
+      state.messageId = -1;
+      this.platform.sendMessage(chatId, { text: displayText || '...' }).then((msgId) => {
+        state!.messageId = msgId ?? undefined;
+        state!.lastEditText = displayText;
+        state!.lastEditAt = Date.now();
+        state!.editCount = 1;
+      });
+      return;
+    }
+
+    // Still waiting for initial message to be sent — buffer deltas silently
+    if (state.messageId === -1) return;
+
+    // Check if we need to split to a new message (exceeded chunk limit)
+    if (state.accumulated.length > STREAM_CHUNK_LIMIT) {
+      console.log(`[Bridge] text_delta exceeded limit: ${state.accumulated.length} chars, finalizing and starting new`);
+      const currentChunk = state.accumulated.substring(0, STREAM_CHUNK_LIMIT);
+      this.platform.editMessage(chatId, state.messageId, { text: currentChunk });
+      // Keep overflow for next message
+      state.accumulated = state.accumulated.substring(STREAM_CHUNK_LIMIT);
+      state.messageId = undefined;  // Will create new message on next delta
+      state.lastEditText = '';
+      state.lastEditAt = 0;
+      state.editCount = 0;
+      return;
+    }
 
     // Throttle: skip edit if too soon
     const now = Date.now();
@@ -264,30 +458,11 @@ export class Bridge {
     }
     if (state.editCount >= 20) return;
 
-    // Check if content changed since last edit
-    if (state.accumulated === state.lastEditText) return;
-
-    // Check if we need to split to a new message (exceeded chunk limit)
-    if (state.accumulated.length > STREAM_CHUNK_LIMIT) {
-      // Send accumulated content as new message, reset state
-      const chunks = splitContent(state.accumulated);
-      for (const chunk of chunks) {
-        this.platform.sendMessage(chatId, { text: chunk.text });
-      }
-      state.accumulated = '';
-      state.lastEditText = '';
-      state.messageId = undefined; // Will be set by next sendMessage
-      state.editCount = 0;
-      this.streamingStates.delete(chatId);
-      return;
-    }
-
-    // Edit existing message
-    const editContent = state.accumulated || '...';
+    // Edit existing message with full accumulated text
     state.editCount++;
     state.lastEditAt = now;
     state.lastEditText = state.accumulated;
-    this.platform.editMessage(chatId, state.messageId, { text: editContent });
+    this.platform.editMessage(chatId, state.messageId, { text: state.accumulated || '...' });
   }
 
   /**
@@ -297,13 +472,29 @@ export class Bridge {
     const state = this.streamingStates.get(chatId);
     if (!state) return;
 
-    // If there's accumulated content that differs from what was last edited, send it
+    console.log(`[Bridge] finalizeStreaming: accumulated=${state.accumulated.length} chars, lastEdit=${state.lastEditText.length} chars, msgId=${state.messageId}`);
+
     if (state.accumulated && state.accumulated !== state.lastEditText) {
-      if (state.messageId !== undefined) {
-        // Try to edit the existing message with final content
+      if (state.accumulated.length > STREAM_CHUNK_LIMIT) {
+        // Too long for a single message — split
+        console.log(`[Bridge] final content exceeded limit, splitting into chunks`);
+        const chunks = splitContent(state.accumulated);
+        // Edit last message to first chunk if possible, send rest as new
+        if (state.messageId !== undefined && state.messageId !== -1) {
+          this.platform.editMessage(chatId, state.messageId, { text: chunks[0].text });
+          for (let i = 1; i < chunks.length; i++) {
+            this.platform.sendMessage(chatId, { text: chunks[i].text });
+          }
+        } else {
+          for (const chunk of chunks) {
+            this.platform.sendMessage(chatId, { text: chunk.text });
+          }
+        }
+      } else if (state.messageId !== undefined && state.messageId !== -1) {
+        // Edit existing message with final content
         this.platform.editMessage(chatId, state.messageId, { text: state.accumulated });
       } else {
-        // No message ID — send as new message
+        // No message created yet (or pending) — send as new
         this.platform.sendMessage(chatId, { text: state.accumulated });
       }
     }

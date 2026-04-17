@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate, useSearchParams, Navigate, useParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../stores';
 import { apiClient } from '../lib/api';
@@ -59,15 +59,15 @@ const FeishuIcon: React.FC<{ className?: string }> = ({ className }) => (
 export const BindBotPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { platform: routePlatform } = useParams<{ platform: string }>();
+  const location = useLocation();
   const { t } = useTranslation();
   const { isAuthenticated, token } = useAuthStore();
 
   const [bindState, setBindState] = useState<BindState>('confirming');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Determine platform from route param
-  const platform = routePlatform || 'telegram';
+  // Determine platform from URL path (/bind-telegram or /bind-feishu)
+  const platform = location.pathname.endsWith('/bind-feishu') ? 'feishu' : 'telegram';
   const config = PLATFORMS[platform] || PLATFORMS.telegram;
 
   const bindToken = searchParams.get('token');
@@ -110,11 +110,28 @@ export const BindBotPage: React.FC = () => {
     setErrorMsg('');
 
     try {
-      await apiClient.post(config.apiEndpoint, {
+      const result = await apiClient.post(config.apiEndpoint, {
         token: bindToken,
         platform_user_id: platformUserId,
         chat_id: chatId,
       });
+
+      // Notify bot service so it can establish Socket.IO connection
+      const botServiceUrl = import.meta.env.VITE_BOT_SERVICE_URL || 'http://localhost:3001';
+      try {
+        await fetch(`${botServiceUrl}/api/bind/callback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform_user_id: platformUserId,
+            jwt: result.jwt,
+            refresh_secret: result.refresh_secret,
+          }),
+        });
+      } catch (e) {
+        console.warn('[Bind] Failed to notify bot service:', e);
+      }
+
       setBindState('success');
     } catch (err: any) {
       const msg = err?.message || err?.response?.data?.error || t('bind.failed');

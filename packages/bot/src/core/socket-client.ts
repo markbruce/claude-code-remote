@@ -18,6 +18,7 @@ export interface SocketEventHandlers {
   onChatComplete?: (data: { session_id: string }) => void;
   onChatError?: (data: { session_id: string; content?: string }) => void;
   onSessionEnd?: (data: { session_id: string }) => void;
+  onSessionMessages?: (data: { sdk_session_id: string; messages: unknown[]; total: number; hasMore: boolean }) => void;
   onError?: (data: { message: string }) => void;
 }
 
@@ -66,6 +67,7 @@ export class SocketClientManager {
     socket.on(SocketEvents.CHAT_COMPLETE, (data) => handlers.onChatComplete?.(data));
     socket.on(SocketEvents.CHAT_ERROR, (data) => handlers.onChatError?.(data));
     socket.on(SocketEvents.SESSION_END, (data) => handlers.onSessionEnd?.(data));
+    socket.on(SocketEvents.SESSION_MESSAGES, (data) => handlers.onSessionMessages?.(data));
     socket.on(SocketEvents.ERROR, (data) => handlers.onError?.(data));
 
     this.connections.set(platformUserId, socket);
