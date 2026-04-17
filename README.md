@@ -181,7 +181,7 @@ This project supports both **npm** and **pnpm**:
 
 ### Telegram Bot
 
-- 🤖 **Telegram Integration** — Full-featured Telegram bot (`@CCRDevBot`) for remote Claude Code access
+- 🤖 **Telegram Integration** — Full-featured Telegram bot for remote Claude Code access (deploy your own via [@BotFather](https://t.me/BotFather))
 - 🔗 **Account Binding** — One-click bind via deep link, web-based OAuth flow
 - 📋 **InlineKeyboard** — Tap-to-select machines, projects, and sessions
 - 💬 **Chat & Streaming** — Send messages to Claude with real-time streaming output
