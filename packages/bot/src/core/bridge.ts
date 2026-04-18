@@ -128,6 +128,42 @@ export class Bridge {
    * Handle callback (button press) from platform.
    */
   private async handleCallback(chatId: string, action: string, data: string): Promise<void> {
+    // AskUserQuestion option selection
+    if (action === 'question') {
+      const colonIdx = data.indexOf(':');
+      if (colonIdx < 0) return;
+      const callbackKey = parseInt(data.substring(0, colonIdx), 10);
+      const optionIndex = parseInt(data.substring(colonIdx + 1), 10);
+      if (isNaN(callbackKey) || isNaN(optionIndex)) return;
+
+      const pending = this.permissions.resolve(callbackKey, true);
+      if (!pending || !pending.toolInput) {
+        this.platform.sendMessage(chatId, { text: 'Question expired.' });
+        return;
+      }
+
+      try {
+        const toolInput = JSON.parse(pending.toolInput);
+        const questions = toolInput.questions || [];
+        const question = questions[0];
+        if (!question || !question.options || optionIndex >= question.options.length) return;
+
+        const selectedLabel = question.options[optionIndex].label;
+
+        this.sockets.emit(chatId, SocketEvents.CHAT_PERMISSION_ANSWER, {
+          session_id: pending.sessionId,
+          requestId: pending.requestId,
+          approved: true,
+          updatedInput: { answers: [selectedLabel] },
+        });
+
+        this.platform.sendMessage(chatId, { text: `✅ 已选择: ${selectedLabel}` });
+      } catch {
+        this.platform.sendMessage(chatId, { text: 'Failed to parse question data.' });
+      }
+      return;
+    }
+
     // Permission approve/deny
     if (action === 'approve' || action === 'deny') {
       const callbackKey = parseInt(data, 10);

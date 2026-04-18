@@ -40,6 +40,9 @@ export interface BotPlatform {
   /** Send a permission approval prompt with buttons */
   sendPermission(chatId: string, request: PermissionRequest): Promise<void>;
 
+  /** Send a question with selectable option buttons (e.g. AskUserQuestion) */
+  sendQuestion(chatId: string, question: string, options: Array<{ label: string; description?: string; callbackData: string }>): Promise<void>;
+
   /** Register bot commands with the platform */
   registerCommands(commands: BotCommand[]): Promise<void>;
 

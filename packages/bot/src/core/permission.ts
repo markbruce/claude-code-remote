@@ -10,6 +10,7 @@ export interface PendingPermission {
   description: string;
   timer: NodeJS.Timeout;
   createdAt: number;
+  toolInput?: string;
 }
 
 export class PermissionManager {
@@ -26,7 +27,7 @@ export class PermissionManager {
    * Register a pending permission request.
    * Returns a short callback key for Telegram Inline Keyboard (≤64 bytes).
    */
-  register(sessionId: string, requestId: string, chatId: string, toolName: string, description: string, timeoutMs: number = 300000): number {
+  register(sessionId: string, requestId: string, chatId: string, toolName: string, description: string, timeoutMs: number = 300000, toolInput?: string): number {
     const key = this.nextKey++;
     const timer = setTimeout(() => {
       this.pending.delete(key);
@@ -34,7 +35,7 @@ export class PermissionManager {
       this.onTimeout?.(requestId, sessionId, chatId);
     }, timeoutMs);
 
-    const entry: PendingPermission = { sessionId, requestId, chatId, toolName, description, timer, createdAt: Date.now() };
+    const entry: PendingPermission = { sessionId, requestId, chatId, toolName, description, timer, createdAt: Date.now(), toolInput };
     this.pending.set(key, entry);
     this.lookup.set(requestId, key);
     return key;

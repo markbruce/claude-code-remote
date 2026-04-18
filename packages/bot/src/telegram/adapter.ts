@@ -135,6 +135,25 @@ export class TelegramAdapter implements BotPlatform {
     });
   }
 
+  async sendQuestion(chatId: string, question: string, options: Array<{ label: string; description?: string; callbackData: string }>): Promise<void> {
+    const { escapeMd } = await import('./formatter');
+    const keyboard = new InlineKeyboard();
+    for (const opt of options) {
+      const label = opt.description
+        ? `${opt.label} — ${opt.description.substring(0, 40)}`
+        : opt.label;
+      keyboard.text(label.substring(0, 60), opt.callbackData).row();
+    }
+    try {
+      await this.bot.api.sendMessage(chatId, `❓ ${escapeMd(question)}`, {
+        parse_mode: 'MarkdownV2',
+        reply_markup: keyboard,
+      });
+    } catch {
+      await this.bot.api.sendMessage(chatId, `❓ ${question}`, { reply_markup: keyboard });
+    }
+  }
+
   async registerCommands(commands: BotCommand[]): Promise<void> {
     try {
       await this.bot.api.setMyCommands(
