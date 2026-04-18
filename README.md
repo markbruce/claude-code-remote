@@ -139,6 +139,7 @@ This project supports both **npm** and **pnpm**:
 | Start Server | `npm run dev:server` | `pnpm --filter @cc-remote/server dev` |
 | Start Web | `npm run dev:web` | `pnpm --filter @cc-remote/web dev` |
 | Start Agent (dev) | `npm run dev:agent` | `pnpm --filter @cc-remote/agent dev` |
+| Start Telegram bot (dev) | — | `pnpm --filter cc-remote-bot dev` (set `TELEGRAM_BOT_TOKEN`) |
 | Build shared | `npm run build:shared` | `pnpm --filter @cc-remote/shared build` |
 | Build server | `npm run build:server` | `pnpm --filter @cc-remote/server build` |
 | Build agent | `npm run build:agent` | `pnpm --filter @cc-remote/agent build` |
@@ -289,17 +290,44 @@ npm run build:agent
 cd packages/agent
 node dist/index.js
 
-# Terminal 4 (optional): Build and start Telegram bot
+# Terminal 4 (optional): Telegram bot — see "Telegram Bot (optional)" below for env vars and binding
+cd packages/bot
+npm run build
+TELEGRAM_BOT_TOKEN=<your_botfather_token> node dist/index.js
+```
+
+#### Telegram Bot (optional)
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the **HTTP API token**.
+2. **Environment variables** (CLI flags override env where noted):
+   - `TELEGRAM_BOT_TOKEN` — required unless you pass `--bot-token <token>` to `node dist/index.js`
+   - `BOT_SERVER_URL` — Claude Code Remote server URL (default `http://localhost:3000`); use `--server <url>` to override
+   - `BOT_PORT` — local HTTP port for bind-token verification and callbacks (default `3001`); use `--port <port>` to override
+3. **Align URLs** so binding works: the Server and Web must reach this bot HTTP service. Defaults assume everything runs on one machine:
+   - In `packages/server/.env`, `BOT_SERVICE_URL` defaults to `http://localhost:3001` if unset (must match where the bot listens).
+   - For the Web UI in dev, `VITE_BOT_SERVICE_URL` defaults to `http://localhost:3001` in `BindBotPage` (set in `packages/web/.env` if your bot runs elsewhere).
+4. **Start the bot** (Server should already be running):
+
+```bash
+# After build (production-style)
 pnpm --filter cc-remote-bot build
 cd packages/bot
-node dist/index.js
+TELEGRAM_BOT_TOKEN=<token> node dist/index.js
+# or explicitly:
+# node dist/index.js --bot-token <token> --server http://localhost:3000 --port 3001
+
+# Development (TypeScript watch + nodemon)
+pnpm --filter cc-remote-bot dev
+# Set TELEGRAM_BOT_TOKEN in your shell or a .env file loaded by your environment
 ```
+
+5. In Telegram, send `/start` to your bot, open the bind link in the browser, and log in to complete account binding.
 
 6. **Access the app**
 - Web UI: http://localhost:5173
 - Server API: http://localhost:3000
 - Health check: http://localhost:3000/health
-- Telegram Bot: Send `/start` to your bot
+- Telegram Bot: after binding, use `/start` and chat as documented in the bot help
 
 ---
 

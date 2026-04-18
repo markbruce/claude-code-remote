@@ -357,8 +357,8 @@ export class SdkSession extends EventEmitter {
         if (assistantMsg.message?.content) {
           for (const block of assistantMsg.message.content) {
             if (typeof block === 'object' && 'type' in block) {
-              if (block.type === 'tool_result') {
-                const resultBlock = block as { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean };
+              if ((block as { type: string }).type === 'tool_result') {
+                const resultBlock = block as unknown as { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean };
                 this.emitChatEvent('tool_result', {
                   toolId: resultBlock.tool_use_id,
                   toolResult: typeof resultBlock.content === 'string'

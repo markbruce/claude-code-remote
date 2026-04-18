@@ -42,6 +42,7 @@ export class Bridge {
   readonly pendingMessages = new Map<string, string>();      // chatId → message to send after session starts
   private streamingStates = new Map<string, StreamingState>(); // chatId → streaming state
   private finalizeTimers = new Map<string, NodeJS.Timeout>();  // chatId → pending finalize timer
+  private pendingFreeText = new Map<string, { callbackKey: number; question: string }>(); // chatId → pending free-text answer
 
   constructor(platform: BotPlatform, config?: BotConfig) {
     this.config = config || loadConfig();
@@ -101,6 +102,25 @@ export class Bridge {
       return;
     }
 
+    // Intercept free-text answer for AskUserQuestion "Other..."
+    const freeText = this.pendingFreeText.get(chatId);
+    if (freeText) {
+      this.pendingFreeText.delete(chatId);
+      const pending = this.permissions.resolve(freeText.callbackKey, true);
+      if (pending) {
+        this.sockets.emit(chatId, SocketEvents.CHAT_PERMISSION_ANSWER, {
+          session_id: pending.sessionId,
+          requestId: pending.requestId,
+          approved: true,
+          updatedInput: { answers: [text] },
+        });
+        this.platform.sendMessage(chatId, { text: `✅ 已输入: ${text}` });
+      } else {
+        this.platform.sendMessage(chatId, { text: '⚠️ Question expired.' });
+      }
+      return;
+    }
+
     // If no active session, auto-start one with the user's message
     if (!session.session_id) {
       this.pendingMessages.set(chatId, text);
@@ -133,12 +153,27 @@ export class Bridge {
       const colonIdx = data.indexOf(':');
       if (colonIdx < 0) return;
       const callbackKey = parseInt(data.substring(0, colonIdx), 10);
-      const optionIndex = parseInt(data.substring(colonIdx + 1), 10);
+      const optionData = data.substring(colonIdx + 1);
+
+      // "Other..." — switch to free-text input mode
+      if (optionData === 'text') {
+        const entry = this.permissions.get(callbackKey);
+        if (!entry) {
+          this.platform.sendMessage(chatId, { text: '⚠️ Already answered from another client or expired.' });
+          return;
+        }
+        this.pendingFreeText.set(chatId, { callbackKey, question: entry.toolName });
+        this.platform.sendMessage(chatId, { text: '💬 请直接输入你的答案：' });
+        return;
+      }
+
+      // Predefined option
+      const optionIndex = parseInt(optionData, 10);
       if (isNaN(callbackKey) || isNaN(optionIndex)) return;
 
       const pending = this.permissions.resolve(callbackKey, true);
       if (!pending || !pending.toolInput) {
-        this.platform.sendMessage(chatId, { text: 'Question expired.' });
+        this.platform.sendMessage(chatId, { text: '⚠️ Already answered from another client or expired.' });
         return;
       }
 
@@ -431,13 +466,45 @@ export class Bridge {
         }
       },
       onChatPermissionRequest: (data) => {
+        const inputStr = JSON.stringify(data.toolInput);
         const key = this.permissions.register(
           data.session_id,
           data.requestId,
           platformUserId,
           data.toolName,
-          JSON.stringify(data.toolInput),
+          inputStr.substring(0, 200),
+          300000,
+          inputStr,
         );
+
+        // AskUserQuestion — render question options as inline buttons
+        if (data.toolName === 'AskUserQuestion') {
+          try {
+            const input = typeof data.toolInput === 'string'
+              ? JSON.parse(data.toolInput)
+              : data.toolInput;
+            const questions = input?.questions || [];
+            const question = questions[0];
+            if (question && question.options?.length > 0) {
+              const questionText = question.question || 'Please select:';
+              const buttons = question.options.slice(0, 5).map((opt: any, i: number) => ({
+                text: opt.label.length > 20 ? opt.label.substring(0, 17) + '…' : opt.label,
+                callbackData: `question:${key}:${i}`,
+              }));
+              // Add "Other..." button for free-text input
+              buttons.push({
+                text: '✏️ Other...',
+                callbackData: `question:${key}:text`,
+              });
+              this.platform.sendInlineButtons(platformUserId, `❓ ${questionText}`, buttons);
+              return;
+            }
+          } catch {
+            // Fall through to default permission handling
+          }
+        }
+
+        // Default tool permission — approve/deny
         this.platform.sendPermission(platformUserId, {
           sessionId: data.session_id,
           requestId: data.requestId,
