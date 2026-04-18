@@ -424,17 +424,15 @@ export class Bridge {
           }
         } else if (data.type === 'tool_result') {
           const td = data as any;
-          if (td.toolResult) {
+          if (td.isError) {
+            // Show full error details for debugging
             const result = typeof td.toolResult === 'string'
               ? td.toolResult
               : JSON.stringify(td.toolResult);
             const truncated = result.length > 3500 ? result.substring(0, 3497) + '...' : result;
-            const safeResult = truncated.replace(/```/g, '``');
-            this.platform.sendMessage(platformUserId, {
-              text: `\`\`\`\n${safeResult}\n\`\`\``,
-              parseMode: 'Markdown',
-            });
+            this.platform.sendMessage(platformUserId, { text: `❌ Error:\n${truncated}` });
           }
+          // Success — silent (the tool_use notification already shows what was called)
         } else if (data.type === 'error') {
           this.platform.sendMessage(platformUserId, { text: `⚠️ Error: ${data.content || 'Unknown error'}` });
         }
@@ -455,14 +453,13 @@ export class Bridge {
         }
       },
       onChatToolResult: (data) => {
-        // Don't finalize streaming — just show tool result as an inline notification.
-        if (data.toolResult) {
+        // Only show tool results on error — success is silent.
+        if ((data as any).isError && data.toolResult) {
           const result = typeof data.toolResult === 'string'
             ? data.toolResult
             : JSON.stringify(data.toolResult);
-          // Truncate to fit Telegram message limit
           const text = result.length > 3500 ? result.substring(0, 3497) + '...' : result;
-          this.platform.sendMessage(platformUserId, { text });
+          this.platform.sendMessage(platformUserId, { text: `❌ Error:\n${text}` });
         }
       },
       onChatPermissionRequest: (data) => {
