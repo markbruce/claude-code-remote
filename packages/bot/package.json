@@ -11,6 +11,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.60.0",
     "better-sqlite3": "^11.7.0",
     "cc-remote-shared": "workspace:*",
     "commander": "^12.1.0",

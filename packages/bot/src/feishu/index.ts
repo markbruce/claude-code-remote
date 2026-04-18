@@ -1,10 +1,7 @@
 /**
- * Feishu adapter stub — future implementation
+ * Feishu adapter module — re-exports
  */
 
-export class FeishuAdapter {
-  // TODO: Implement BotPlatform for Feishu
-  // - Use Feishu Open Platform SDK
-  // - Interactive message cards for permission approval
-  // - Rich text formatting
-}
+export { FeishuAdapter } from './adapter';
+export { registerHandlers, verifyBindToken } from './handlers';
+export { BOT_COMMANDS } from './commands';
