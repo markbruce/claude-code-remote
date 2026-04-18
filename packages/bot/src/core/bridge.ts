@@ -7,8 +7,8 @@ import { SocketClientManager, SocketEventHandlers } from './socket-client';
 import { SessionStore, UserSession } from './session-store';
 import { PermissionManager } from './permission';
 import { splitContent } from './splitter';
-import { BotPlatform, MessageContent } from '../shared/platform';
-import { SocketEvents } from 'cc-remote-shared';
+import { BotPlatform, MessageContent, FileMessage } from '../shared/platform';
+import { SocketEvents, AttachmentRef } from 'cc-remote-shared';
 import { loadConfig, BotConfig } from '../config';
 
 /** Tracks streaming state per chat for text_delta editing */
@@ -68,6 +68,12 @@ export class Bridge {
     // Wire platform events
     this.platform.onMessage(this.handleMessage.bind(this));
     this.platform.onCallback(this.handleCallback.bind(this));
+    this.platform.onFileMessage((msg) => {
+      this.handleFileMessage(msg).catch((err) => {
+        console.error('[Bridge] File message handling failed:', err);
+        this.platform.sendMessage(msg.chatId, { text: '⚠️ Failed to process file.' });
+      });
+    });
   }
 
   /**
@@ -142,6 +148,78 @@ export class Bridge {
       session_id: session.session_id,
       content: text,
     });
+  }
+
+  /**
+   * Handle incoming file (photo/document) from platform.
+   */
+  private async handleFileMessage(msg: FileMessage): Promise<void> {
+    const session = this.sessions.getByPlatformUserId(msg.chatId);
+
+    if (!session || session.state === 'unbound') {
+      this.platform.sendMessage(msg.chatId, { text: 'Please bind your account first with /start' });
+      return;
+    }
+    if (!session.machine_id || !session.project_path) {
+      this.platform.sendMessage(msg.chatId, { text: 'Set up a machine and project first. Use /machines and /projects' });
+      return;
+    }
+    if (!session.session_id) {
+      this.platform.sendMessage(msg.chatId, { text: 'Start a chat first by sending a text message.' });
+      return;
+    }
+    if (!session.jwt) {
+      this.platform.sendMessage(msg.chatId, { text: 'Session expired. Re-bind with /start' });
+      return;
+    }
+
+    this.platform.sendMessage(msg.chatId, { text: `📎 Uploading ${msg.filename}...` });
+
+    let attachment: AttachmentRef;
+    try {
+      attachment = await this.uploadFile(session.jwt, session.session_id, msg.filename, msg.mimeType, msg.data);
+    } catch (err: any) {
+      this.platform.sendMessage(msg.chatId, { text: `Upload failed: ${err.message || 'Unknown error'}` });
+      return;
+    }
+
+    // End any prior stream and send file as new message
+    this.clearFinalizeTimer(msg.chatId);
+    this.finalizeStreaming(msg.chatId);
+
+    this.sockets.emit(msg.chatId, SocketEvents.CHAT_SEND, {
+      session_id: session.session_id,
+      content: msg.text || `Sent a file: ${msg.filename}`,
+      attachments: [attachment],
+    });
+  }
+
+  /** Upload a file to the server and return an AttachmentRef */
+  private async uploadFile(
+    jwt: string,
+    sessionId: string,
+    filename: string,
+    mimeType: string,
+    data: Buffer,
+  ): Promise<AttachmentRef> {
+    const blob = new Blob([new Uint8Array(data)], { type: mimeType });
+    const formData = new FormData();
+    formData.append('file', blob, filename);
+    formData.append('session_id', sessionId);
+
+    const uploadUrl = `${this.config.serverUrl}/api/upload`;
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(err.error || `Upload failed: ${response.status}`);
+    }
+
+    return await response.json() as AttachmentRef;
   }
 
   /**

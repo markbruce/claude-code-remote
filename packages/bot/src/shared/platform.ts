@@ -27,6 +27,16 @@ export interface InlineButton {
   callbackData: string;
 }
 
+/** File attachment received from a platform user (photo, document, etc.) */
+export interface FileMessage {
+  chatId: string;
+  text: string;        // caption, may be empty
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: Buffer;        // raw file bytes
+}
+
 export interface BotPlatform {
   /** Start the platform adapter (connect, register commands, etc.) */
   start(): Promise<void>;
@@ -51,6 +61,9 @@ export interface BotPlatform {
 
   /** Register handler for incoming text messages */
   onMessage(handler: (chatId: string, text: string) => void): void;
+
+  /** Register handler for incoming file messages (photos, documents) */
+  onFileMessage(handler: (msg: FileMessage) => void): void;
 
   /** Register handler for button callbacks */
   onCallback(handler: (chatId: string, action: string, data: string) => void): void;

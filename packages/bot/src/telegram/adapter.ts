@@ -3,7 +3,7 @@
  */
 
 import { Bot, InlineKeyboard } from 'grammy';
-import { BotPlatform, MessageContent, PermissionRequest, BotCommand, InlineButton } from '../shared/platform';
+import { BotPlatform, MessageContent, PermissionRequest, BotCommand, InlineButton, FileMessage } from '../shared/platform';
 import { PermissionManager } from '../core/permission';
 import { formatPermissionPrompt } from './formatter';
 
@@ -14,8 +14,10 @@ export class TelegramAdapter implements BotPlatform {
   private bot: Bot;
   private messageHandlers: MessageHandler[] = [];
   private callbackHandlers: CallbackHandler[] = [];
+  private fileMessageHandlers: Array<(msg: FileMessage) => void> = [];
   private permissionManager!: PermissionManager; // Set via setPermissionManager
   private messageListenerRegistered = false;
+  private fileMessageListenerRegistered = false;
 
   constructor(token: string) {
     console.log(`[TelegramAdapter] Initializing with API base: https://api.telegram.org`);
@@ -203,5 +205,66 @@ export class TelegramAdapter implements BotPlatform {
 
   onCallback(handler: CallbackHandler): void {
     this.callbackHandlers.push(handler);
+  }
+
+  onFileMessage(handler: (msg: FileMessage) => void): void {
+    this.fileMessageHandlers.push(handler);
+    if (this.fileMessageListenerRegistered) return;
+    this.fileMessageListenerRegistered = true;
+
+    // Photo handler — download largest size
+    this.bot.on('message:photo', async (ctx) => {
+      try {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1]; // largest
+        const data = await this.downloadTelegramFile(photo.file_id);
+        const msg: FileMessage = {
+          chatId: String(ctx.chat.id),
+          text: ctx.message.caption || '',
+          filename: `${photo.file_unique_id}.jpg`,
+          mimeType: 'image/jpeg',
+          size: data.length,
+          data,
+        };
+        for (const h of this.fileMessageHandlers) h(msg);
+      } catch (err) {
+        console.error('[Telegram] Photo processing error:', err);
+        await ctx.reply('⚠️ Failed to process photo.');
+      }
+    });
+
+    // Document handler — generic files
+    this.bot.on('message:document', async (ctx) => {
+      try {
+        const doc = ctx.message.document;
+        // Size check before downloading
+        if (doc.file_size && doc.file_size > 10 * 1024 * 1024) {
+          await ctx.reply('⚠️ File too large (max 10MB).');
+          return;
+        }
+        const data = await this.downloadTelegramFile(doc.file_id);
+        const msg: FileMessage = {
+          chatId: String(ctx.chat.id),
+          text: ctx.message.caption || '',
+          filename: doc.file_name || `file_${doc.file_unique_id}`,
+          mimeType: doc.mime_type || 'application/octet-stream',
+          size: data.length,
+          data,
+        };
+        for (const h of this.fileMessageHandlers) h(msg);
+      } catch (err) {
+        console.error('[Telegram] Document processing error:', err);
+        await ctx.reply('⚠️ Failed to process file.');
+      }
+    });
+  }
+
+  /** Download a file from Telegram's file API */
+  private async downloadTelegramFile(fileId: string): Promise<Buffer> {
+    const file = await this.bot.api.getFile(fileId);
+    if (!file.file_path) throw new Error('No file_path returned by Telegram');
+    const url = `https://api.telegram.org/file/bot${this.bot.token}/${file.file_path}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Telegram file download failed: ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
   }
 }
