@@ -19,11 +19,16 @@ interface StreamingState {
   lastEditText: string;             // Text sent in last edit (to skip redundant edits)
   editCount: number;                // Edits in current throttle window
   windowStart: number;              // Start of current 1-min throttle window (ms)
+  /** onChatComplete fired; waiting debounced finalize — a new `text` is the next assistant reply */
+  completeScheduled?: boolean;
 }
 
 const STREAM_EDIT_THROTTLE_MS = 3000;   // Min interval between edits (20/min = 3s)
 const STREAM_CHUNK_LIMIT = 3900;         // Max chars before splitting to new message
 const STREAM_INITIAL_DEBOUNCE_MS = 500;  // Wait before first edit to batch early deltas
+const STREAM_FINALIZE_DEBOUNCE_MS = 1500; // Delay finalize to absorb late text_delta
+const FINALIZE_PENDING_FIRST_MSG_RETRIES = 40; // 40 * 50ms — wait for first sendMessage to resolve
+const FINALIZE_PENDING_FIRST_MSG_MS = 50;
 
 export class Bridge {
   readonly sockets: SocketClientManager;
@@ -36,6 +41,7 @@ export class Bridge {
   readonly cachedSessions = new Map<string, unknown[]>();  // chatId → last sessions list
   readonly pendingMessages = new Map<string, string>();      // chatId → message to send after session starts
   private streamingStates = new Map<string, StreamingState>(); // chatId → streaming state
+  private finalizeTimers = new Map<string, NodeJS.Timeout>();  // chatId → pending finalize timer
 
   constructor(platform: BotPlatform, config?: BotConfig) {
     this.config = config || loadConfig();
@@ -106,6 +112,10 @@ export class Bridge {
       });
       return;
     }
+
+    // End any prior stream for this chat so the next assistant reply never edits the old Telegram bubble
+    this.clearFinalizeTimer(chatId);
+    this.finalizeStreaming(chatId);
 
     // Send message to active Claude session via Socket.IO
     this.sockets.emit(chatId, SocketEvents.CHAT_SEND, {
@@ -233,6 +243,8 @@ export class Bridge {
         const pending = this.pendingMessages.get(platformUserId);
         if (pending) {
           this.pendingMessages.delete(platformUserId);
+          this.clearFinalizeTimer(platformUserId);
+          this.finalizeStreaming(platformUserId);
           this.sockets.emit(platformUserId, SocketEvents.CHAT_SEND, {
             session_id: data.sessionId,
             content: pending,
@@ -286,6 +298,30 @@ export class Bridge {
       },
       onChatMessage: (data) => {
         if (data.type === 'text') {
+          this.clearFinalizeTimer(platformUserId);
+          let existing = this.streamingStates.get(platformUserId);
+          // Previous turn finished (complete) but debounced finalize not run yet — this `text` is a new reply
+          if (existing?.completeScheduled) {
+            console.log(
+              `[Bridge] text event: new assistant message while finalize pending — flushing previous (acc=${existing.accumulated.length})`,
+            );
+            void this.finalizeStreaming(platformUserId).then(() => {
+              this.platform.sendMessage(platformUserId, { text: '✅ done' });
+            });
+            existing = this.streamingStates.get(platformUserId);
+          }
+          // Agent may emit multiple empty `text` markers per turn — do not wipe an active stream.
+          if (
+            existing &&
+            !existing.completeScheduled &&
+            (existing.accumulated.length > 0 ||
+              existing.messageId !== undefined)
+          ) {
+            console.log(
+              `[Bridge] text event: duplicate start marker — keeping stream (acc=${existing.accumulated.length}, msgId=${existing.messageId})`,
+            );
+            return;
+          }
           // Agent sends 'text' event with empty content as streaming start marker
           // Real content arrives via 'text_delta' events
           console.log(`[Bridge] text event: ${(data.content ?? '').length} chars — initializing streaming state`);
@@ -296,16 +332,48 @@ export class Bridge {
             lastEditText: '',
             editCount: 0,
             windowStart: Date.now(),
+            completeScheduled: false,
           });
         } else if (data.type === 'text_delta') {
-          // Streaming delta — accumulate and periodically edit message
+          // Do NOT clear finalize timer here: late deltas after onChatComplete would cancel
+          // the scheduled finalize and never reschedule, leaving the reply stuck.
           const delta = data.content ?? '';
           this.handleTextDelta(platformUserId, delta);
+        } else if (data.type === 'complete') {
+          // Server sends all events via chat:message channel, not separate channels.
+          this.scheduleFinalize(platformUserId);
+        } else if (data.type === 'tool_use') {
+          // Flush accumulated text before showing tool notification so user sees
+          // up-to-date content during the tool execution.
+          this.flushStreaming(platformUserId);
+          const td = data as any;
+          if (td.toolName) {
+            const formatted = formatToolNotification(td.toolName, td.toolInput);
+            this.platform.sendMessage(platformUserId, { text: formatted, parseMode: 'Markdown' });
+          }
+        } else if (data.type === 'tool_result') {
+          const td = data as any;
+          if (td.toolResult) {
+            const result = typeof td.toolResult === 'string'
+              ? td.toolResult
+              : JSON.stringify(td.toolResult);
+            const truncated = result.length > 3500 ? result.substring(0, 3497) + '...' : result;
+            const safeResult = truncated.replace(/```/g, '``');
+            this.platform.sendMessage(platformUserId, {
+              text: `\`\`\`\n${safeResult}\n\`\`\``,
+              parseMode: 'Markdown',
+            });
+          }
+        } else if (data.type === 'error') {
+          this.platform.sendMessage(platformUserId, { text: `⚠️ Error: ${data.content || 'Unknown error'}` });
         }
       },
       onChatToolUse: (data) => {
-        // Don't finalize streaming — Claude may continue producing text after tool use.
-        // The tool use notification is sent as a separate inline message without breaking the stream.
+        // Flush accumulated text before showing tool notification.
+        // Don't finalize (delete state) — Claude continues producing text after tool use.
+        // But we MUST push the throttled text to Telegram now, otherwise the user sees
+        // stale content during the entire tool execution.
+        this.flushStreaming(platformUserId);
         if (data.toolName) {
           const input = typeof data.toolInput === 'string'
             ? data.toolInput
@@ -344,9 +412,9 @@ export class Bridge {
         } as any);
       },
       onChatComplete: () => {
-        // Claude finished one response — finalize streaming and show brief done marker
-        this.finalizeStreaming(platformUserId);
-        this.platform.sendMessage(platformUserId, { text: '✅' });
+        // Claude finished one response.
+        // Delay finalization slightly to absorb late-arriving text_delta frames.
+        this.scheduleFinalize(platformUserId);
       },
       onChatError: (data) => {
         this.platform.sendMessage(platformUserId, { text: `⚠️ Error: ${data.content || 'Unknown error'}` });
@@ -404,6 +472,7 @@ export class Bridge {
         lastEditText: '',
         editCount: 0,
         windowStart: Date.now(),
+        completeScheduled: false,
       };
       this.streamingStates.set(chatId, state);
     }
@@ -412,8 +481,7 @@ export class Bridge {
 
     // No message created yet — send initial message with accumulated content
     if (state.messageId === undefined) {
-      // Wait until we have some meaningful content before creating the message
-      if (state.accumulated.length < 10 && state.accumulated.length < delta.length * 3) return;
+      if (!state.accumulated.length) return;
 
       const displayText = state.accumulated.length > STREAM_CHUNK_LIMIT
         ? state.accumulated.substring(0, STREAM_CHUNK_LIMIT)
@@ -422,10 +490,16 @@ export class Bridge {
       // Mark as pending immediately to prevent duplicate sends from concurrent deltas
       state.messageId = -1;
       this.platform.sendMessage(chatId, { text: displayText || '...' }).then((msgId) => {
-        state!.messageId = msgId ?? undefined;
-        state!.lastEditText = displayText;
-        state!.lastEditAt = Date.now();
-        state!.editCount = 1;
+        const s = this.streamingStates.get(chatId);
+        if (!s) return;
+        s.messageId = msgId ?? undefined;
+        const full = s.accumulated;
+        if (s.messageId !== undefined && full !== displayText) {
+          this.platform.editMessage(chatId, s.messageId, { text: full || '...' });
+        }
+        s.lastEditText = full;
+        s.lastEditAt = Date.now();
+        s.editCount = 1;
       });
       return;
     }
@@ -468,38 +542,87 @@ export class Bridge {
   /**
    * Finalize streaming: send any remaining accumulated content as a final message.
    */
-  private finalizeStreaming(chatId: string): void {
+  private async finalizeStreaming(chatId: string, pendingFirstMsgRetry = 0): Promise<void> {
     const state = this.streamingStates.get(chatId);
     if (!state) return;
 
+    if (state.messageId === -1 && pendingFirstMsgRetry < FINALIZE_PENDING_FIRST_MSG_RETRIES) {
+      setTimeout(
+        () => this.finalizeStreaming(chatId, pendingFirstMsgRetry + 1),
+        FINALIZE_PENDING_FIRST_MSG_MS,
+      );
+      return;
+    }
+
     console.log(`[Bridge] finalizeStreaming: accumulated=${state.accumulated.length} chars, lastEdit=${state.lastEditText.length} chars, msgId=${state.messageId}`);
 
-    if (state.accumulated && state.accumulated !== state.lastEditText) {
+    if (state.accumulated) {
       if (state.accumulated.length > STREAM_CHUNK_LIMIT) {
         // Too long for a single message — split
         console.log(`[Bridge] final content exceeded limit, splitting into chunks`);
         const chunks = splitContent(state.accumulated);
         // Edit last message to first chunk if possible, send rest as new
         if (state.messageId !== undefined && state.messageId !== -1) {
-          this.platform.editMessage(chatId, state.messageId, { text: chunks[0].text });
+          await this.platform.editMessage(chatId, state.messageId, { text: chunks[0].text });
           for (let i = 1; i < chunks.length; i++) {
-            this.platform.sendMessage(chatId, { text: chunks[i].text });
+            await this.platform.sendMessage(chatId, { text: chunks[i].text });
           }
         } else {
           for (const chunk of chunks) {
-            this.platform.sendMessage(chatId, { text: chunk.text });
+            await this.platform.sendMessage(chatId, { text: chunk.text });
           }
         }
       } else if (state.messageId !== undefined && state.messageId !== -1) {
-        // Edit existing message with final content
-        this.platform.editMessage(chatId, state.messageId, { text: state.accumulated });
+        // Always edit — the last handleTextDelta edit may have failed silently
+        // (editMessage is fire-and-forget). A redundant "message is not modified"
+        // error is handled gracefully by the adapter.
+        await this.platform.editMessage(chatId, state.messageId, { text: state.accumulated });
       } else {
         // No message created yet (or pending) — send as new
-        this.platform.sendMessage(chatId, { text: state.accumulated });
+        await this.platform.sendMessage(chatId, { text: state.accumulated });
       }
     }
 
     this.streamingStates.delete(chatId);
+  }
+
+  /**
+   * Flush accumulated text to Telegram, then reset state for a new message.
+   * Called before tool_use notifications so:
+   * 1. User sees up-to-date text before the tool executes
+   * 2. Post-tool text starts in a fresh message bubble (cleaner reading flow)
+   */
+  private flushStreaming(chatId: string): void {
+    const state = this.streamingStates.get(chatId);
+    if (!state || !state.accumulated) return;
+    if (state.messageId !== undefined && state.messageId !== -1) {
+      this.platform.editMessage(chatId, state.messageId, { text: state.accumulated });
+    }
+    // Reset for new message — next text_delta creates a fresh Telegram bubble
+    state.messageId = undefined;
+    state.accumulated = '';
+    state.lastEditText = '';
+    state.lastEditAt = 0;
+    state.editCount = 0;
+  }
+
+  private clearFinalizeTimer(chatId: string): void {
+    const timer = this.finalizeTimers.get(chatId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.finalizeTimers.delete(chatId);
+  }
+
+  private scheduleFinalize(chatId: string): void {
+    this.clearFinalizeTimer(chatId);
+    const st = this.streamingStates.get(chatId);
+    if (st) st.completeScheduled = true;
+    const timer = setTimeout(async () => {
+      this.finalizeTimers.delete(chatId);
+      await this.finalizeStreaming(chatId);
+      this.platform.sendMessage(chatId, { text: '✅ done' });
+    }, STREAM_FINALIZE_DEBOUNCE_MS);
+    this.finalizeTimers.set(chatId, timer);
   }
 
   /**
@@ -516,4 +639,59 @@ export class Bridge {
       }
     }
   }
+}
+
+/**
+ * Format tool_use notification for Telegram with MarkdownV2.
+ * Extracts key parameters (command, file path, pattern) instead of raw JSON.
+ */
+function formatToolNotification(toolName: string, toolInput: unknown): string {
+  const input = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput || {});
+
+  // Extract the most relevant parameter per tool
+  let display: string;
+  try {
+    const parsed = JSON.parse(input);
+    switch (toolName) {
+      case 'Bash':
+      case 'BashOutput':
+        display = parsed.command || input;
+        break;
+      case 'Read':
+        display = parsed.file_path || parsed.filePath || input;
+        break;
+      case 'Write':
+        display = parsed.file_path || parsed.filePath || input;
+        break;
+      case 'Edit':
+        display = parsed.file_path || parsed.filePath || input;
+        break;
+      case 'Grep':
+        display = `${parsed.pattern || ''}${parsed.path ? ` in ${parsed.path}` : ''}`;
+        break;
+      case 'Glob':
+        display = parsed.pattern || input;
+        break;
+      default:
+        display = input;
+        break;
+    }
+  } catch {
+    display = input;
+  }
+
+  // Truncate long inputs
+  if (display.length > 400) display = display.substring(0, 397) + '...';
+
+  // Escape tool name for MarkdownV2
+  const escapedName = escapeMd(toolName);
+  // Content inside code block doesn't need escaping, but strip ``` to avoid breaking
+  const safeDisplay = display.replace(/```/g, '``');
+
+  return `*🔧 ${escapedName}*\n\`\`\`\n${safeDisplay}\n\`\`\``;
+}
+
+/** Escape MarkdownV2 special characters */
+function escapeMd(text: string): string {
+  return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
 }
