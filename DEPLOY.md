@@ -112,7 +112,7 @@ cc-agent start -s http://your-server:3000
 pnpm run pack:agent
 ```
 
-会在 `packages/agent/` 下生成 `cc-remote-agent-1.0.0.tgz`。
+会在 `packages/agent/` 下生成 `cc-remote-agent-1.2.0.tgz`。
 
 注意：该包依赖 workspace 内的 `@cc-remote/shared`，因此 **仅适合在拥有本仓库源码的环境**（如团队内网）安装使用。在无源码的机器上安装该 tgz 后运行会因缺少 shared 而报错，此类场景请使用下面两种方式之一。
 
@@ -199,3 +199,72 @@ cc-agent --help
 - **生产部署**：以本文档（DEPLOY.md）为准；Docker 与 Agent 交付方式按上文操作即可。
 
 若需对外提供 HTTPS，请在 Docker 前增加反向代理（如 Nginx、Caddy）并配置 TLS，同时将 `CORS_ORIGIN` 设为实际前端域名。
+
+---
+
+## 五、Bot 部署（Telegram / 飞书）
+
+Bot 包（`packages/bot`）可同时运行 Telegram 和飞书 Bot，通过 WebSocket 长连接与 Server 通信。支持在同一进程中运行两个平台。
+
+### 5.1 构建与启动
+
+```bash
+# 在仓库根目录
+pnpm install
+pnpm run build          # 或 pnpm --filter cc-remote-bot build
+
+# 启动（根据环境变量自动启用对应平台）
+node packages/bot/dist/index.js
+```
+
+也可全局链接后使用 `cc-bot` 命令：
+
+```bash
+cd packages/bot && pnpm link --global
+cc-bot
+```
+
+### 5.2 环境变量
+
+| 变量 | 说明 | 必填 |
+|------|------|------|
+| `SERVER_URL` | Server 地址（如 `http://your-server:3000`） | 是 |
+| `BOT_PORT` | Bot HTTP 服务端口（默认 `3001`） | 否 |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（通过 @BotFather 获取） | 启用 Telegram 时 |
+| `FEISHU_APP_ID` | 飞书自建应用 App ID | 启用飞书时 |
+| `FEISHU_APP_SECRET` | 飞书自建应用 App Secret | 启用飞书时 |
+| `FEISHU_VERIFICATION_TOKEN` | 飞书事件订阅验证 Token | 否 |
+| `FEISHU_ENCRYPT_KEY` | 飞书事件加密 Key | 否 |
+
+只需配置对应平台的环境变量即可启用，无需 `--platform` 参数。两个平台可同时运行。
+
+### 5.3 Telegram Bot 配置
+
+1. 在 Telegram 中找到 @BotFather，创建新 Bot 并获取 Token
+2. 设置 Bot 命令菜单：`/setcommands`，填入 `start`、`machines`、`projects`、`history`、`stop` 等
+3. 设置环境变量 `TELEGRAM_BOT_TOKEN` 后启动 Bot
+4. 在 Telegram 中给 Bot 发送 `/start` 开始账号绑定流程
+
+### 5.4 飞书 Bot 配置
+
+1. 在[飞书开发者后台](https://open.feishu.cn/app)创建自建应用
+2. 在「事件订阅」中启用 WebSocket 模式（无需公网 URL）
+3. 添加事件订阅：`im.message.receive_v1`（接收消息）、`card.action.trigger`（卡片按钮回调）
+4. 在「权限管理」中开通：`im:message`、`im:message:send_as_bot`、`im:resource`
+5. 发布应用版本，在飞书客户端搜索并添加 Bot
+6. 设置环境变量 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后启动 Bot
+
+### 5.5 账号绑定流程
+
+两个平台的绑定流程一致：
+
+1. 用户在 Bot 中发送 `/start`
+2. Bot 生成绑定链接（Telegram 深度链接 / 飞书网页链接）
+3. 用户在浏览器中打开链接并登录 CC-Remote 账号
+4. 绑定成功后即可通过 Bot 与 Claude Code 对话
+
+### 5.6 已知限制
+
+- **飞书**：WebSocket 消息投递在某些环境下不稳定，可能出现收不到消息的情况
+- **飞书**：互动卡片按钮可能需要多次点击才能触发
+- **飞书**：流式文本编辑使用 `im.message.update` 接口，每条消息最多编辑 20 次，长回复可能触达上限

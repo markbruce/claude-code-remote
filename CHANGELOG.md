@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
-## Unreleased
+## [v1.2.0] - 2026-04-19
 
 ### Added / 新增
 
