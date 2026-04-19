@@ -3,16 +3,25 @@
 /**
  * cc-bot — Claude Code Remote Bot Service
  * CLI entry point that starts the bot bridge.
+ * Supports running Telegram and Feishu simultaneously in one process.
  */
 
+import 'dotenv/config';
 import http from 'http';
 import { Command } from 'commander';
-import { loadConfig } from './config';
+import { loadConfig, BotConfig } from './config';
 import { Bridge } from './core/bridge';
 import { TelegramAdapter } from './telegram/adapter';
 import { registerHandlers as registerTelegramHandlers, verifyBindToken as verifyTelegramBindToken } from './telegram/handlers';
 import { FeishuAdapter } from './feishu/adapter';
 import { registerHandlers as registerFeishuHandlers, verifyBindToken as verifyFeishuBindToken } from './feishu/handlers';
+
+interface PlatformSetup {
+  platform: string;
+  bridge: Bridge;
+  cardWebhookHandler?: (req: http.IncomingMessage, res: http.ServerResponse) => void;
+  close?: () => void;
+}
 
 const program = new Command();
 
@@ -20,7 +29,6 @@ program
   .name('cc-bot')
   .description('Claude Code Remote Bot Service — IM bridge for Claude Code sessions')
   .version('0.1.0')
-  .option('--platform <platform>', 'Messaging platform (telegram|feishu)', 'telegram')
   .option('--bot-token <token>', 'Telegram bot token (or set TELEGRAM_BOT_TOKEN)')
   .option('--server <url>', 'Server URL (or set BOT_SERVER_URL)')
   .option('--port <port>', 'Bot HTTP port (or set BOT_PORT)', '3001')
@@ -32,7 +40,6 @@ program
     const config = loadConfig({
       serverUrl: options.server,
       botPort: parseInt(options.port, 10),
-      platform: options.platform,
       telegramBotToken: options.botToken,
       feishuAppId: options.feishuAppId,
       feishuAppSecret: options.feishuAppSecret,
@@ -40,202 +47,158 @@ program
       feishuEncryptKey: options.feishuEncryptKey,
     });
 
+    const platforms: PlatformSetup[] = [];
+
     console.log('');
     console.log('=================================');
     console.log('  Claude Code Remote Bot');
     console.log('=================================');
-    console.log(`  Platform: ${config.platform}`);
     console.log(`  Server:   ${config.serverUrl}`);
     console.log(`  Bot Port: ${config.botPort}`);
+    console.log(`  Telegram: ${config.telegramBotToken ? '✅ configured' : '❌ not configured'}`);
+    console.log(`  Feishu:   ${config.feishuAppId ? '✅ configured' : '❌ not configured'}`);
     console.log('=================================');
     console.log('');
 
-    if (config.platform === 'telegram') {
-      if (!config.telegramBotToken) {
-        console.error('Error: Telegram bot token required. Use --bot-token or set TELEGRAM_BOT_TOKEN');
-        process.exit(1);
-      }
-
-      // 1. Create adapter (no bridge dependency yet)
+    // ── Telegram ──────────────────────────────────────────────────────
+    if (config.telegramBotToken) {
       const adapter = new TelegramAdapter(config.telegramBotToken);
-
-      // 2. Create bridge with adapter
       const bridge = new Bridge(adapter, config);
-
-      // 3. Inject permission manager into adapter (resolves circular dep)
       adapter.setPermissionManager(bridge.permissions);
-
-      // 4. Register command handlers (needs bridge for Socket.IO access)
       registerTelegramHandlers(adapter.getBot(), bridge);
+      platforms.push({ platform: 'telegram', bridge });
+      console.log('[Bot] Telegram adapter initialized');
+    }
 
-      // 5. Start lightweight HTTP server for bind token verification + callbacks
-      const httpServer = http.createServer((req, res) => {
-        // CORS headers
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-        if (req.method === 'OPTIONS') {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
-
-        if (req.url?.startsWith('/api/bind/verify')) {
-          const url = new URL(req.url, `http://localhost:${config.botPort}`);
-          const token = url.searchParams.get('token');
-          if (token && verifyTelegramBindToken(token)) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ valid: true }));
-          } else {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ valid: false, error: 'Invalid or expired token' }));
-          }
-        } else if (req.url?.startsWith('/api/bind/callback') && req.method === 'POST') {
-          let body = '';
-          req.on('data', (chunk: string) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const { platform_user_id, jwt, refresh_secret } = JSON.parse(body);
-              if (!platform_user_id || !jwt) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Missing platform_user_id or jwt' }));
-                return;
-              }
-              const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-              bridge.sessions.upsertBinding(platform_user_id, jwt, expiresAt, refresh_secret || '');
-              bridge.connectUser(platform_user_id, jwt);
-              console.log(`[Bot] Bind callback: user ${platform_user_id} connected`);
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: true }));
-            } catch {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
-            }
-          });
-        } else {
-          res.writeHead(404);
-          res.end('Not found');
-        }
-      });
-      httpServer.listen(config.botPort, () => {
-        console.log(`[Bot] HTTP server listening on port ${config.botPort}`);
-      });
-
-      // 6. Start bridge
-      await bridge.start();
-      console.log('[Bot] Telegram bot is running. Press Ctrl+C to stop.');
-
-      // Graceful shutdown
-      const shutdown = () => {
-        console.log('\n[Bot] Shutting down...');
-        bridge.sockets.disconnectAll();
-        bridge.sessions.close();
-        httpServer.close();
-        process.exit(0);
-      };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
-    } else if (config.platform === 'feishu') {
-      if (!config.feishuAppId || !config.feishuAppSecret) {
-        console.error('Error: Feishu App ID and Secret required. Use --feishu-app-id and --feishu-app-secret, or set FEISHU_APP_ID and FEISHU_APP_SECRET');
-        process.exit(1);
-      }
-
-      // 1. Create adapter
+    // ── Feishu ────────────────────────────────────────────────────────
+    if (config.feishuAppId && config.feishuAppSecret) {
       const adapter = new FeishuAdapter(
         config.feishuAppId,
         config.feishuAppSecret,
         config.feishuVerificationToken,
         config.feishuEncryptKey,
       );
-
-      // 2. Create bridge with adapter
       const bridge = new Bridge(adapter, config);
-
-      // 3. Inject permission manager
       adapter.setPermissionManager(bridge.permissions);
-
-      // 4. Register command handlers
       registerFeishuHandlers(adapter, bridge);
+      platforms.push({
+        platform: 'feishu',
+        bridge,
+        cardWebhookHandler: (req, res) => adapter.handleCardWebhook(req, res),
+        close: () => adapter.close(),
+      });
+      console.log('[Bot] Feishu adapter initialized');
+    }
 
-      // 5. Start HTTP server with webhook endpoint + bind verification
-      const httpServer = http.createServer((req, res) => {
-        // CORS headers
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-        if (req.method === 'OPTIONS') {
-          res.writeHead(204);
-          res.end();
-          return;
-        }
+    if (platforms.length === 0) {
+      console.error('Error: No platform configured. Provide Telegram bot token or Feishu App ID/Secret.');
+      process.exit(1);
+    }
 
-        // Feishu webhook endpoint
-        if (req.url === '/webhook/feishu' && req.method === 'POST') {
-          adapter.handleWebhook(req, res);
-          return;
-        }
+    // ── Shared HTTP server ────────────────────────────────────────────
+    const httpServer = http.createServer((req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
 
-        if (req.url?.startsWith('/api/bind/verify')) {
-          const url = new URL(req.url, `http://localhost:${config.botPort}`);
-          const token = url.searchParams.get('token');
-          if (token && verifyFeishuBindToken(token)) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ valid: true }));
-          } else {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ valid: false, error: 'Invalid or expired token' }));
-          }
-        } else if (req.url?.startsWith('/api/bind/callback') && req.method === 'POST') {
-          let body = '';
-          req.on('data', (chunk: string) => { body += chunk; });
-          req.on('end', () => {
-            try {
-              const { platform_user_id, jwt, refresh_secret } = JSON.parse(body);
-              if (!platform_user_id || !jwt) {
-                res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Missing platform_user_id or jwt' }));
-                return;
-              }
-              const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-              bridge.sessions.upsertBinding(platform_user_id, jwt, expiresAt, refresh_secret || '');
-              bridge.connectUser(platform_user_id, jwt);
-              console.log(`[Bot] Bind callback: user ${platform_user_id} connected`);
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ success: true }));
-            } catch {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
-            }
-          });
+      // Feishu card action callback
+      if (req.url === '/webhook/feishu' && req.method === 'POST') {
+        const feishuPlatform = platforms.find(p => p.platform === 'feishu');
+        if (feishuPlatform?.cardWebhookHandler) {
+          feishuPlatform.cardWebhookHandler(req, res);
         } else {
           res.writeHead(404);
           res.end('Not found');
         }
-      });
-      httpServer.listen(config.botPort, () => {
-        console.log(`[Bot] HTTP server listening on port ${config.botPort}`);
-        console.log(`[Bot] Feishu webhook: http://localhost:${config.botPort}/webhook/feishu`);
-      });
+        return;
+      }
 
-      // 6. Start bridge
-      await bridge.start();
-      console.log('[Bot] Feishu bot is running. Press Ctrl+C to stop.');
+      // Bind token verification — try both platforms
+      if (req.url?.startsWith('/api/bind/verify')) {
+        const url = new URL(req.url, `http://localhost:${config.botPort}`);
+        const token = url.searchParams.get('token') || '';
+        if (verifyTelegramBindToken(token) || verifyFeishuBindToken(token)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valid: true }));
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valid: false, error: 'Invalid or expired token' }));
+        }
+        return;
+      }
 
-      // Graceful shutdown
-      const shutdown = () => {
-        console.log('\n[Bot] Shutting down...');
-        bridge.sockets.disconnectAll();
-        bridge.sessions.close();
-        httpServer.close();
-        process.exit(0);
-      };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
-    } else {
-      console.error(`Error: Unsupported platform: ${config.platform}`);
-      process.exit(1);
+      // Bind callback — find the right bridge by platform_user_id format
+      if (req.url?.startsWith('/api/bind/callback') && req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk: string) => { body += chunk; });
+        req.on('end', () => {
+          try {
+            const { platform_user_id, jwt, refresh_secret } = JSON.parse(body);
+            if (!platform_user_id || !jwt) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Missing platform_user_id or jwt' }));
+              return;
+            }
+            // Route to the right bridge: ou_ = Feishu, numeric = Telegram
+            const bridge = platform_user_id.startsWith('ou_')
+              ? platforms.find(p => p.platform === 'feishu')?.bridge
+              : platforms.find(p => p.platform === 'telegram')?.bridge;
+
+            if (!bridge) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'No matching platform' }));
+              return;
+            }
+
+            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+            bridge.sessions.upsertBinding(platform_user_id, jwt, expiresAt, refresh_secret || '');
+            bridge.connectUser(platform_user_id, jwt);
+            console.log(`[Bot] Bind callback: user ${platform_user_id} connected`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
+      res.writeHead(404);
+      res.end('Not found');
+    });
+
+    httpServer.listen(config.botPort, () => {
+      console.log(`[Bot] HTTP server listening on port ${config.botPort}`);
+    });
+
+    // ── Start all platforms ───────────────────────────────────────────
+    for (const p of platforms) {
+      await p.bridge.start();
+      console.log(`[Bot] ${p.platform} bridge started`);
     }
+
+    const platformNames = platforms.map(p => p.platform).join(' + ');
+    console.log(`[Bot] Running: ${platformNames}. Press Ctrl+C to stop.`);
+
+    // Graceful shutdown
+    const shutdown = () => {
+      console.log('\n[Bot] Shutting down...');
+      for (const p of platforms) {
+        p.close?.();
+        p.bridge.sockets.disconnectAll();
+        p.bridge.sessions.close();
+      }
+      httpServer.close();
+      process.exit(0);
+    };
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   });
 
 program.parse();

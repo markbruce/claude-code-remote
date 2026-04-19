@@ -498,7 +498,12 @@ export class Bridge {
           const td = data as any;
           if (td.toolName) {
             const formatted = formatToolNotification(td.toolName, td.toolInput);
-            this.platform.sendMessage(platformUserId, { text: formatted, parseMode: 'Markdown' });
+            // Telegram supports Markdown, Feishu uses plain text
+            const isTelegram = !!(this.platform as any)?.getBot;
+            this.platform.sendMessage(platformUserId, {
+              text: formatted,
+              parseMode: isTelegram ? 'Markdown' : undefined,
+            });
           }
         } else if (data.type === 'tool_result') {
           const td = data as any;
@@ -811,10 +816,16 @@ export class Bridge {
     console.log(`[Bridge] Recovering ${bound.length} bound sessions...`);
 
     for (const session of bound) {
-      // TODO: Check JWT expiry and refresh if needed (requires HTTP call to server)
-      if (session.jwt) {
-        this.connectUser(session.platform_user_id, session.jwt);
+      if (!session.jwt) continue;
+      // Skip sessions that don't match this adapter's platform:
+      // Feishu open_id starts with "ou_", Telegram chat IDs are purely numeric.
+      const isFeishuUser = session.platform_user_id.startsWith('ou_');
+      const adapterIsFeishu = !(this.platform as any)?.getBot; // Telegram adapter has getBot(), Feishu doesn't
+      if (isFeishuUser !== adapterIsFeishu) {
+        console.log(`[Bridge] Skipping session ${session.platform_user_id} (different platform)`);
+        continue;
       }
+      this.connectUser(session.platform_user_id, session.jwt);
     }
   }
 }

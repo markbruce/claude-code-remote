@@ -1,5 +1,8 @@
 /**
  * Feishu adapter — implements BotPlatform using @larksuiteoapi/node-sdk
+ * Uses WSClient (WebSocket long connection) for receiving events.
+ * Card action callbacks are handled via card.action.trigger event subscription
+ * through the same WebSocket connection. HTTP card webhook is kept as fallback.
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
@@ -7,6 +10,7 @@ import {
   Client,
   EventDispatcher,
   CardActionHandler,
+  WSClient,
   adaptDefault,
 } from '@larksuiteoapi/node-sdk';
 import {
@@ -24,6 +28,7 @@ type CallbackHandler = (chatId: string, action: string, data: string) => void;
 
 export class FeishuAdapter implements BotPlatform {
   private client: Client;
+  private wsClient: WSClient;
   private verificationToken: string;
   private encryptKey: string;
   private eventDispatcher: EventDispatcher;
@@ -48,7 +53,9 @@ export class FeishuAdapter implements BotPlatform {
     console.log(`[FeishuAdapter] Initializing with App ID: ${appId.substring(0, 8)}...`);
     this.client = new Client({ appId, appSecret, appType: 0 }); // SelfBuild = 0
 
-    // Event dispatcher for message events
+    // Event dispatcher for message and card action events (used by WSClient)
+    // The SDK's handleEventData automatically sends the response back through WebSocket,
+    // so we only need to process the event here — no manual sendMessage needed.
     this.eventDispatcher = new EventDispatcher({
       verificationToken: this.verificationToken,
       encryptKey: this.encryptKey,
@@ -56,9 +63,18 @@ export class FeishuAdapter implements BotPlatform {
       'im.message.receive_v1': async (data: any) => {
         this.handleIncomingMessage(data);
       },
+      'card.action.trigger': async (data: any) => {
+        const eventData = data?.event || data;
+        console.log('[Feishu] Card action event received via EventDispatcher');
+        this.handleCardAction(eventData);
+        // Return nothing — SDK's handleEventData sends { code: 0 } response automatically
+      },
     });
 
-    // Card action handler for button callbacks
+    // WSClient — WebSocket long connection, no public URL needed
+    this.wsClient = new WSClient({ appId, appSecret });
+
+    // Card action handler — receives card button callbacks via HTTP endpoint
     this.cardHandler = new CardActionHandler(
       {
         verificationToken: this.verificationToken,
@@ -84,21 +100,52 @@ export class FeishuAdapter implements BotPlatform {
   }
 
   async start(): Promise<void> {
-    console.log('[Feishu] Adapter ready (webhook events handled by HTTP server)');
+    await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
+    console.log('[Feishu] WebSocket connected');
+  }
+
+  /** Close WebSocket connection */
+  close(): void {
+    this.wsClient.close();
   }
 
   // ── BotPlatform implementation ──────────────────────────────────────
 
+  /** Rate limiter for Feishu API calls (1 call per interval per key) */
+  private lastCallTime = new Map<string, number>();
+  private callQueue = new Map<string, Promise<unknown>>();
+
+  private async rateLimitedCall<T>(key: string, fn: () => Promise<T>, minIntervalMs = 500): Promise<T> {
+    // Chain on existing queue for the same key to serialize calls
+    const existing = this.callQueue.get(key);
+    if (existing) {
+      return new Promise<T>((resolve, reject) => {
+        existing.then(() => fn().then(resolve, reject), reject);
+      });
+    }
+    const lastTime = this.lastCallTime.get(key) || 0;
+    const now = Date.now();
+    const wait = Math.max(0, minIntervalMs - (now - lastTime));
+    const promise = (async () => {
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      const result = await fn();
+      this.lastCallTime.set(key, Date.now());
+      this.callQueue.delete(key);
+      return result;
+    })();
+    this.callQueue.set(key, promise);
+    return promise;
+  }
+
   async sendMessage(chatId: string, content: MessageContent): Promise<number | undefined> {
     try {
       const receiveIdType = chatId.startsWith('oc_') ? 'chat_id' : 'open_id';
-      const msgType = 'text';
       const textContent = JSON.stringify({ text: content.text });
 
       const resp = await this.client.im.message.create({
         data: {
           receive_id: chatId,
-          msg_type: msgType,
+          msg_type: 'text',
           content: textContent,
         },
         params: {
@@ -125,8 +172,18 @@ export class FeishuAdapter implements BotPlatform {
 
       const textContent = JSON.stringify({ text: content.text });
 
-      await this.client.im.message.patch({
-        data: { content: textContent },
+      // Use update (PUT) not patch (PATCH):
+      // PATCH only supports card messages, PUT supports text and rich text.
+      // Throttle edits: max 1 per second per message
+      const editKey = `edit:${feishuMsgId}`;
+      const lastEdit = this.lastCallTime.get(editKey) || 0;
+      const elapsed = Date.now() - lastEdit;
+      if (elapsed < 1000) {
+        await new Promise(r => setTimeout(r, 1000 - elapsed));
+      }
+      this.lastCallTime.set(editKey, Date.now());
+      await this.client.im.message.update({
+        data: { msg_type: 'text', content: textContent },
         path: { message_id: feishuMsgId },
       });
       return true;
@@ -182,31 +239,21 @@ export class FeishuAdapter implements BotPlatform {
     this.fileMessageHandlers.push(handler);
   }
 
-  // ── Webhook HTTP handler ────────────────────────────────────────────
+  // ── Card callback HTTP handler ──────────────────────────────────────
 
   /**
-   * Handle incoming HTTP request for Feishu webhook.
+   * Handle card action HTTP callback.
+   * WSClient receives message events, but card button clicks come via HTTP.
    * Called from index.ts HTTP server for /webhook/feishu path.
    */
-  handleWebhook(req: IncomingMessage, res: ServerResponse): void {
-    const path = '/webhook/feishu';
-
-    // Check if this is a card action callback or event callback
-    // Both use the same path — differentiate by examining the body
-    // The SDK's adaptDefault handles URL verification and event dispatch
-    const eventAdapter = adaptDefault(path, this.eventDispatcher, { autoChallenge: true });
-
-    // Try event dispatcher first, then card handler
-    eventAdapter(req, res).catch(() => {
-      // If event dispatcher didn't handle it, try card handler
-      const cardAdapter = adaptDefault(path, this.cardHandler);
-      cardAdapter(req, res).catch((err: any) => {
-        console.error('[Feishu] Webhook handling error:', err?.message || err);
-        if (!res.headersSent) {
-          res.writeHead(500);
-          res.end('Error');
-        }
-      });
+  handleCardWebhook(req: IncomingMessage, res: ServerResponse): void {
+    const cardAdapter = adaptDefault('/webhook/feishu', this.cardHandler, { autoChallenge: true });
+    cardAdapter(req, res).catch((err: any) => {
+      console.error('[Feishu] Card webhook error:', err?.message || err);
+      if (!res.headersSent) {
+        res.writeHead(500);
+        res.end('Error');
+      }
     });
   }
 
@@ -214,11 +261,17 @@ export class FeishuAdapter implements BotPlatform {
 
   private handleIncomingMessage(data: any): void {
     try {
+      console.log(`[Feishu] Raw message event:`, JSON.stringify(data).substring(0, 500));
       const event = data?.event || data;
       const senderId = event?.sender?.sender_id?.open_id || event?.sender?.sender_id?.user_id;
       const message = event?.message;
 
-      if (!senderId || !message) return;
+      console.log(`[Feishu] Parsed: senderId=${senderId}, message=${!!message}, msgType=${message?.message_type}`);
+
+      if (!senderId || !message) {
+        console.log(`[Feishu] Skipping: missing senderId or message`);
+        return;
+      }
 
       const msgType = message.message_type;
       const content = message.content;
@@ -241,7 +294,7 @@ export class FeishuAdapter implements BotPlatform {
           }
         }
 
-        // Regular message — skip commands (handled above)
+        // Regular message — skip unrecognized commands
         if (text.startsWith('/')) return;
 
         for (const h of this.messageHandlers) {
@@ -254,7 +307,7 @@ export class FeishuAdapter implements BotPlatform {
       }
       // Handle file messages
       else if (msgType === 'file') {
-        this.handleFileMessage(senderId, message, content);
+        this.handleFileMessageEvent(senderId, message, content);
       }
     } catch (err) {
       console.error('[Feishu] Message processing error:', err);
@@ -267,14 +320,12 @@ export class FeishuAdapter implements BotPlatform {
       const imageKey = parsed.image_key;
       if (!imageKey) return;
 
-      // Download image via SDK
       const messageId = message.message_id;
       const result = await this.client.im.messageResource.get({
         params: { type: 'image' },
         path: { message_id: messageId, file_key: imageKey },
       });
 
-      // Get readable stream and convert to Buffer
       const stream = result.getReadableStream();
       const chunks: Buffer[] = [];
       for await (const chunk of stream) {
@@ -293,20 +344,17 @@ export class FeishuAdapter implements BotPlatform {
       for (const h of this.fileMessageHandlers) h(msg);
     } catch (err) {
       console.error('[Feishu] Image processing error:', err);
-      // Can't reply here — no ctx available
     }
   }
 
-  private async handleFileMessage(chatId: string, message: any, content: string): Promise<void> {
+  private async handleFileMessageEvent(chatId: string, message: any, content: string): Promise<void> {
     try {
       const parsed = JSON.parse(content || '{}');
       const fileKey = parsed.file_key;
       const fileName = parsed.file_name || `file_${fileKey}`;
-      const mimeType = 'application/octet-stream';
 
       if (!fileKey) return;
 
-      // Download file via SDK
       const messageId = message.message_id;
       const result = await this.client.im.messageResource.get({
         params: { type: 'file' },
@@ -320,7 +368,6 @@ export class FeishuAdapter implements BotPlatform {
       }
       const data = Buffer.concat(chunks);
 
-      // Size check
       if (data.length > 10 * 1024 * 1024) {
         await this.sendMessage(chatId, { text: '⚠️ File too large (max 10MB).' });
         return;
@@ -330,7 +377,7 @@ export class FeishuAdapter implements BotPlatform {
         chatId,
         text: '',
         filename: fileName,
-        mimeType,
+        mimeType: 'application/octet-stream',
         size: data.length,
         data,
       };
@@ -342,20 +389,44 @@ export class FeishuAdapter implements BotPlatform {
 
   private handleCardAction(data: any): void {
     try {
+      console.log(`[Feishu] Card action raw data:`, JSON.stringify(data, null, 2));
       const action = data?.action;
-      const openId = data?.open_id;
-      if (!action || !openId) return;
+      // card.action.trigger event: operator_id is in data.operator.operator_id or data.operator.open_id
+      // Old card callback (HTTP): open_id is directly in data.open_id
+      const openId = data?.operator?.operator_id?.open_id
+        || data?.operator?.open_id
+        || data?.operator?.user_id
+        || data?.open_id;
+      if (!action || !openId) {
+        console.log(`[Feishu] Card action missing action or openId, action=${!!action}, openId=${!!openId}`);
+        console.log(`[Feishu] Card action full data:`, JSON.stringify(data, null, 2));
+        return;
+      }
 
       const value = action.value;
-      if (!value) return;
+      if (!value) {
+        console.log(`[Feishu] Card action missing value`);
+        return;
+      }
 
-      // Parse the callback data from card button value
       const parsed = typeof value === 'string' ? JSON.parse(value) : value;
-      const actionType = parsed.action || '';
-      const actionData = parsed.data || '';
+      const rawAction = parsed.action || '';
+      const rawData = parsed.data || '';
+      console.log(`[Feishu] Card action parsed: rawAction=${rawAction}, rawData=${rawData}`);
+
+      // Inline buttons store callbackData as "action:data" (e.g. "machine:0"),
+      // wrapped in { action: 'inline', data: 'machine:0' }.
+      // Unwrap to match bridge's handleCallback format.
+      let finalAction = rawAction;
+      let finalData = rawData;
+      if (rawAction === 'inline' && rawData.includes(':')) {
+        const colonIdx = rawData.indexOf(':');
+        finalAction = rawData.substring(0, colonIdx);
+        finalData = rawData.substring(colonIdx + 1);
+      }
 
       for (const h of this.callbackHandlers) {
-        h(openId, actionType, actionData);
+        h(openId, finalAction, finalData);
       }
     } catch (err) {
       console.error('[Feishu] Card action processing error:', err);
@@ -402,13 +473,13 @@ function buildPermissionCard(toolName: string, description: string, callbackKey:
             tag: 'button',
             text: { tag: 'plain_text', content: '✅ Approve' },
             type: 'primary',
-            value: JSON.stringify({ action: 'approve', data: String(callbackKey) }),
+            value: { action: 'approve', data: String(callbackKey) },
           },
           {
             tag: 'button',
             text: { tag: 'plain_text', content: '❌ Deny' },
             type: 'danger',
-            value: JSON.stringify({ action: 'deny', data: String(callbackKey) }),
+            value: { action: 'deny', data: String(callbackKey) },
           },
         ],
       },
@@ -429,7 +500,7 @@ function buildQuestionCard(
         : opt.label,
     },
     type: 'default' as const,
-    value: JSON.stringify({ action: 'question', data: opt.callbackData }),
+    value: { action: 'question', data: opt.callbackData },
   }));
 
   return {
@@ -449,7 +520,7 @@ function buildInlineButtonsCard(text: string, buttons: InlineButton[]): object {
     tag: 'button',
     text: { tag: 'plain_text', content: btn.text.substring(0, 60) },
     type: 'default' as const,
-    value: JSON.stringify({ action: 'inline', data: btn.callbackData }),
+    value: { action: 'inline', data: btn.callbackData },
   }));
 
   return {

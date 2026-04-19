@@ -57,7 +57,24 @@ Claude Code Remote is a lightweight remote development tool that lets you access
 
 ---
 
-## 🆕 v1.1.2 Release Notes
+## 🆕 v1.2.0 Release Notes
+
+feature:
+1. Feishu (飞书) bot integration — run Telegram and Feishu bots simultaneously
+2. Feishu adapter with WebSocket long connection (WSClient) — no public URL needed
+3. Interactive card buttons for machine/project/session selection in Feishu
+4. Streaming text editing via Feishu `im.message.update` API
+5. Image and file upload support in Feishu conversations
+6. Multi-platform bridge — both bots share one HTTP server and process
+
+bugfix:
+1. Fixed Feishu message streaming not updating (used `patch` instead of `update` API)
+2. Fixed bridge session recovery skipping users from different platforms
+3. Removed duplicate WebSocket responses for card action events
+
+---
+
+## v1.1.2 Release Notes
 
 bugfix:
 1. Fixed deprecated `actions/upload-artifact@v3` and `actions/download-artifact@v3` in CI workflow (updated to v4)
@@ -189,6 +206,15 @@ This project supports both **npm** and **pnpm**:
 - 📜 **Session Management** — Browse history, resume past sessions, view conversation records
 - 🛑 **Abort Control** — `/stop` to interrupt running Claude responses
 
+### Feishu Bot
+
+- 🤖 **Feishu Integration** — Full-featured Feishu bot via `@larksuiteoapi/node-sdk` (self-built app, no public URL required)
+- 🔗 **WebSocket Long Connection** — Uses WSClient for events and card actions, no public endpoint needed
+- 📋 **Interactive Cards** — Card-based inline buttons for machine/project/session selection
+- 💬 **Streaming Output** — Real-time message editing via `im.message.update` API
+- 📎 **File Support** — Image and file upload to Claude sessions
+- 🔄 **Multi-Platform** — Run Telegram and Feishu bots in the same process
+
 ### Technical Highlights
 
 - **Monorepo Architecture** — Turborepo + pnpm workspace, shared types, independent builds
@@ -213,12 +239,10 @@ This project supports both **npm** and **pnpm**:
 │ Telegram    │◄──────────────┘                 │ Claude Code │
 │ Bot         │ Socket.io                       │  Process    │
 └─────────────┘                                 └─────────────┘
-       │
-       ▼
-┌──────────────┐
-│   SQLite     │
-│ (Session)    │
-└──────────────┘
+┌─────────────┐          ┌──────────┐
+│ Feishu      │◄────────►│  SQLite  │
+│ Bot (WS)    │ Socket.io│(Session) │
+└─────────────┘          └──────────┘
 ```
 
 ### Tech Stack
@@ -228,7 +252,7 @@ This project supports both **npm** and **pnpm**:
 | **Server** | Node.js + Express + Socket.io + Prisma + tsx watch |
 | **Agent** | Node.js + Commander + Socket.io-client + Claude Agent SDK |
 | **Web** | React + Vite + Tailwind + xterm.js + Zustand |
-| **Bot** | Node.js + grammy + Socket.io-client + better-sqlite3 |
+| **Bot** | Node.js + grammy + @larksuiteoapi/node-sdk + Socket.io-client + better-sqlite3 |
 | **Database** | SQLite + Prisma ORM |
 | **Auth** | JWT + bcrypt |
 | **Chat Rendering** | react-markdown + remark-gfm + react-syntax-highlighter |
@@ -295,6 +319,34 @@ cd packages/bot
 npm run build
 TELEGRAM_BOT_TOKEN=<your_botfather_token> node dist/index.js
 ```
+
+#### Feishu Bot (optional)
+
+1. Create a **self-built app** in [Feishu Developer Console](https://open.feishu.cn/app) and enable bot capabilities.
+2. Under **Events & Callbacks** → **Subscription method**, select **"Use persistent connection"** (长连接).
+3. Subscribe to events: `im.message.receive_v1`, `card.action.trigger`.
+4. Add permissions: `im:message`, `im:message:send_as_bot`, `im:resource`.
+5. **Environment variables** (or CLI flags):
+
+```bash
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
+FEISHU_VERIFICATION_TOKEN=xxx    # from developer console
+FEISHU_ENCRYPT_KEY=xxx           # from developer console
+```
+
+6. **Start** (can run alongside Telegram):
+
+```bash
+cd packages/bot
+pnpm build
+# Both platforms in one process:
+TELEGRAM_BOT_TOKEN=<token> FEISHU_APP_ID=<id> FEISHU_APP_SECRET=<secret> node dist/index.js
+# Or Feishu only:
+FEISHU_APP_ID=<id> FEISHU_APP_SECRET=<secret> node dist/index.js
+```
+
+7. In Feishu, find your bot and send `/start` to begin account binding.
 
 #### Telegram Bot (optional)
 
@@ -413,15 +465,20 @@ claude-code-remote/
 │   │
 │   └── bot/                 # Telegram / IM bot
 │       └── src/
-│           ├── index.ts           # HTTP server + entry point
+│           ├── index.ts           # HTTP server + multi-platform entry point
 │           ├── core/
 │           │   ├── bridge.ts      # Orchestrator (commands → Socket.IO)
 │           │   ├── socket-client.ts # Socket.IO client to server
-│           │   └── session-store.ts # SQLite session persistence
+│           │   ├── session-store.ts # SQLite session persistence
+│           │   └── splitter.ts    # Message splitting utility
 │           ├── telegram/
 │           │   ├── adapter.ts     # grammy bot adapter
 │           │   ├── handlers.ts    # Command handlers
 │           │   └── commands.ts    # Bot command definitions
+│           ├── feishu/
+│           │   ├── adapter.ts     # Feishu WSClient adapter
+│           │   ├── handlers.ts    # Feishu command handlers
+│           │   └── commands.ts    # Feishu command definitions
 │           └── shared/
 │               └── platform.ts    # Platform interface (BotPlatform)
 │   └── web/                 # React Web UI
@@ -492,6 +549,7 @@ cc-agent --config-dir ~/.cc-agent-2  # Specify config directory (multi-instance)
 - [x] **File Explorer** — Sidebar file tree with recursive directory display
 - [x] **Dev Experience** — tsx watch hot reload, automatic port recycling, graceful restart
 - [x] **Telegram Bot** — Full-featured Telegram bot with InlineKeyboard, streaming, session management
+- [x] **Feishu Bot** — Feishu bot with WebSocket long connection, interactive cards, streaming output
 
 ### Planned
 
@@ -542,6 +600,7 @@ This project was inspired by and references the following open-source projects:
 - **[xterm.js](https://xtermjs.org/)** — Terminal emulator
 - **[Zustand](https://github.com/pmndrs/zustand)** — State management
 - **[grammy](https://grammy.dev/)** — Telegram Bot framework
+- **[@larksuiteoapi/node-sdk](https://github.com/larksuite/node-sdk)** — Feishu/Lark Bot SDK
 - **[@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)** — Claude Agent SDK
 
 ---
