@@ -139,6 +139,7 @@ bugfix:
 | 启动 Server | `npm run dev:server` | `pnpm --filter @cc-remote/server dev` |
 | 启动 Web | `npm run dev:web` | `pnpm --filter @cc-remote/web dev` |
 | 启动 Agent (dev) | `npm run dev:agent` | `pnpm --filter @cc-remote/agent dev` |
+| 启动 Telegram bot (dev) | — | `pnpm --filter cc-remote-bot dev`（需设置 `TELEGRAM_BOT_TOKEN`） |
 | 构建 shared | `npm run build:shared` | `pnpm --filter @cc-remote/shared build` |
 | 构建 server | `npm run build:server` | `pnpm --filter @cc-remote/server build` |
 | 构建 agent | `npm run build:agent` | `pnpm --filter @cc-remote/agent build` |
@@ -278,6 +279,11 @@ npm run build:agent
 cd packages/agent
 node dist/index.js bind --token <your-jwt-token>
 node dist/index.js start
+
+# 终端4（可选）: Telegram Bot — 环境变量与绑定说明见下文「Telegram Bot（可选）」
+cd packages/bot
+npm run build
+TELEGRAM_BOT_TOKEN=<你的_BotFather_令牌> node dist/index.js
 ```
 
 使用 pnpm：
@@ -293,7 +299,37 @@ pnpm --filter @cc-remote/agent build
 cd packages/agent
 node dist/index.js bind --token <your-jwt-token>
 node dist/index.js start
+
+# 终端4（可选）: Telegram Bot — 环境变量与绑定说明见下文「Telegram Bot（可选）」
+pnpm --filter cc-remote-bot build
+cd packages/bot
+TELEGRAM_BOT_TOKEN=<你的_BotFather_令牌> node dist/index.js
 ```
+
+#### Telegram Bot（可选）
+
+1. 在 [@BotFather](https://t.me/BotFather) 创建机器人，复制 **HTTP API token**。
+2. **环境变量**（部分可用命令行覆盖）：
+   - `TELEGRAM_BOT_TOKEN` — 必填；也可在启动时传 `--bot-token <token>`
+   - `BOT_SERVER_URL` — 本项目的 Server 地址（默认 `http://localhost:3000`）；可用 `--server <url>` 覆盖
+   - `BOT_PORT` — Bot 本地 HTTP 服务端口，用于绑定校验与回调（默认 `3001`）；可用 `--port <port>` 覆盖
+3. **URL 对齐**：Server 与 Web 必须能访问到 Bot 的 HTTP 服务。本机开发时默认：
+   - `packages/server/.env` 中未设置时，`BOT_SERVICE_URL` 默认为 `http://localhost:3001`（需与 Bot 监听地址一致）
+   - Web 绑定页开发时，`VITE_BOT_SERVICE_URL` 默认 `http://localhost:3001`（若 Bot 部署在其他地址，可在 `packages/web/.env` 中配置）
+4. **启动 Bot**（需先启动 Server）：
+
+```bash
+pnpm --filter cc-remote-bot build
+cd packages/bot
+TELEGRAM_BOT_TOKEN=<token> node dist/index.js
+# 或：node dist/index.js --bot-token <token> --server http://localhost:3000 --port 3001
+
+# 开发（监听编译 + nodemon）
+pnpm --filter cc-remote-bot dev
+# 在 shell 或环境中设置 TELEGRAM_BOT_TOKEN
+```
+
+5. 在 Telegram 中对机器人发送 `/start`，在浏览器中打开绑定链接并登录完成账号绑定。
 
 6. **访问应用**
 - Web UI: http://localhost:5173

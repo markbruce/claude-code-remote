@@ -2,7 +2,7 @@
 
 <div align="center">
 
-**Remotely control Claude Code on any PC from your phone or browser**
+**Remotely control Claude Code on any PC from your phone, browser, or Telegram**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue.svg)](https://www.typescriptlang.org/)
@@ -139,6 +139,7 @@ This project supports both **npm** and **pnpm**:
 | Start Server | `npm run dev:server` | `pnpm --filter @cc-remote/server dev` |
 | Start Web | `npm run dev:web` | `pnpm --filter @cc-remote/web dev` |
 | Start Agent (dev) | `npm run dev:agent` | `pnpm --filter @cc-remote/agent dev` |
+| Start Telegram bot (dev) | — | `pnpm --filter cc-remote-bot dev` (set `TELEGRAM_BOT_TOKEN`) |
 | Build shared | `npm run build:shared` | `pnpm --filter @cc-remote/shared build` |
 | Build server | `npm run build:server` | `pnpm --filter @cc-remote/server build` |
 | Build agent | `npm run build:agent` | `pnpm --filter @cc-remote/agent build` |
@@ -179,6 +180,15 @@ This project supports both **npm** and **pnpm**:
 - 🔄 **Real-time Communication** — Socket.io bidirectional communication with separated Agent/Client namespaces
 - 🛡️ **Security** — Rate limiting, password hashing, input validation
 
+### Telegram Bot
+
+- 🤖 **Telegram Integration** — Full-featured Telegram bot for remote Claude Code access (deploy your own via [@BotFather](https://t.me/BotFather))
+- 🔗 **Account Binding** — One-click bind via deep link, web-based OAuth flow
+- 📋 **InlineKeyboard** — Tap-to-select machines, projects, and sessions
+- 💬 **Chat & Streaming** — Send messages to Claude with real-time streaming output
+- 📜 **Session Management** — Browse history, resume past sessions, view conversation records
+- 🛑 **Abort Control** — `/stop` to interrupt running Claude responses
+
 ### Technical Highlights
 
 - **Monorepo Architecture** — Turborepo + pnpm workspace, shared types, independent builds
@@ -197,12 +207,18 @@ This project supports both **npm** and **pnpm**:
 │ Client      │◄────────►│   Server     │◄────────►│ PC Agent    │
 │ (Web/PWA)   │ Socket.io│ (Express)    │ Socket.io │             │
 └─────────────┘   +JWT   └──────────────┘   +JWT   └─────────────┘
-                               │                        │
-                               ▼                        ▼
-                        ┌──────────────┐         ┌─────────────┐
-                        │   SQLite     │         │ Claude Code │
-                        │ (Prisma ORM) │         │  Process    │
-                        └──────────────┘         └─────────────┘
+                               ▲                        │
+                               │                        ▼
+┌─────────────┐               │                 ┌─────────────┐
+│ Telegram    │◄──────────────┘                 │ Claude Code │
+│ Bot         │ Socket.io                       │  Process    │
+└─────────────┘                                 └─────────────┘
+       │
+       ▼
+┌──────────────┐
+│   SQLite     │
+│ (Session)    │
+└──────────────┘
 ```
 
 ### Tech Stack
@@ -212,6 +228,7 @@ This project supports both **npm** and **pnpm**:
 | **Server** | Node.js + Express + Socket.io + Prisma + tsx watch |
 | **Agent** | Node.js + Commander + Socket.io-client + Claude Agent SDK |
 | **Web** | React + Vite + Tailwind + xterm.js + Zustand |
+| **Bot** | Node.js + grammy + Socket.io-client + better-sqlite3 |
 | **Database** | SQLite + Prisma ORM |
 | **Auth** | JWT + bcrypt |
 | **Chat Rendering** | react-markdown + remark-gfm + react-syntax-highlighter |
@@ -272,12 +289,45 @@ npm run dev:web
 npm run build:agent
 cd packages/agent
 node dist/index.js
+
+# Terminal 4 (optional): Telegram bot — see "Telegram Bot (optional)" below for env vars and binding
+cd packages/bot
+npm run build
+TELEGRAM_BOT_TOKEN=<your_botfather_token> node dist/index.js
 ```
+
+#### Telegram Bot (optional)
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the **HTTP API token**.
+2. **Environment variables** (CLI flags override env where noted):
+   - `TELEGRAM_BOT_TOKEN` — required unless you pass `--bot-token <token>` to `node dist/index.js`
+   - `BOT_SERVER_URL` — Claude Code Remote server URL (default `http://localhost:3000`); use `--server <url>` to override
+   - `BOT_PORT` — local HTTP port for bind-token verification and callbacks (default `3001`); use `--port <port>` to override
+3. **Align URLs** so binding works: the Server and Web must reach this bot HTTP service. Defaults assume everything runs on one machine:
+   - In `packages/server/.env`, `BOT_SERVICE_URL` defaults to `http://localhost:3001` if unset (must match where the bot listens).
+   - For the Web UI in dev, `VITE_BOT_SERVICE_URL` defaults to `http://localhost:3001` in `BindBotPage` (set in `packages/web/.env` if your bot runs elsewhere).
+4. **Start the bot** (Server should already be running):
+
+```bash
+# After build (production-style)
+pnpm --filter cc-remote-bot build
+cd packages/bot
+TELEGRAM_BOT_TOKEN=<token> node dist/index.js
+# or explicitly:
+# node dist/index.js --bot-token <token> --server http://localhost:3000 --port 3001
+
+# Development (TypeScript watch + nodemon)
+pnpm --filter cc-remote-bot dev
+# Set TELEGRAM_BOT_TOKEN in your shell or a .env file loaded by your environment
+```
+
+5. In Telegram, send `/start` to your bot, open the bind link in the browser, and log in to complete account binding.
 
 6. **Access the app**
 - Web UI: http://localhost:5173
 - Server API: http://localhost:3000
 - Health check: http://localhost:3000/health
+- Telegram Bot: after binding, use `/start` and chat as documented in the bot help
 
 ---
 
@@ -361,6 +411,19 @@ claude-code-remote/
 │   │       ├── sdk-session.ts     # Claude Agent SDK session management (Chat mode)
 │   │       └── scanner.ts         # Project directory scanning
 │   │
+│   └── bot/                 # Telegram / IM bot
+│       └── src/
+│           ├── index.ts           # HTTP server + entry point
+│           ├── core/
+│           │   ├── bridge.ts      # Orchestrator (commands → Socket.IO)
+│           │   ├── socket-client.ts # Socket.IO client to server
+│           │   └── session-store.ts # SQLite session persistence
+│           ├── telegram/
+│           │   ├── adapter.ts     # grammy bot adapter
+│           │   ├── handlers.ts    # Command handlers
+│           │   └── commands.ts    # Bot command definitions
+│           └── shared/
+│               └── platform.ts    # Platform interface (BotPlatform)
 │   └── web/                 # React Web UI
 │       └── src/
 │           ├── components/
@@ -428,6 +491,7 @@ cc-agent --config-dir ~/.cc-agent-2  # Specify config directory (multi-instance)
 - [x] **Slash Commands** — `/` command panel with built-in commands + model switching + Skills + Plugins
 - [x] **File Explorer** — Sidebar file tree with recursive directory display
 - [x] **Dev Experience** — tsx watch hot reload, automatic port recycling, graceful restart
+- [x] **Telegram Bot** — Full-featured Telegram bot with InlineKeyboard, streaming, session management
 
 ### Planned
 
@@ -477,6 +541,7 @@ This project was inspired by and references the following open-source projects:
 - **[Vite](https://vitejs.dev/)** — Build tool
 - **[xterm.js](https://xtermjs.org/)** — Terminal emulator
 - **[Zustand](https://github.com/pmndrs/zustand)** — State management
+- **[grammy](https://grammy.dev/)** — Telegram Bot framework
 - **[@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)** — Claude Agent SDK
 
 ---

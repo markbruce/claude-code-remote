@@ -3,7 +3,7 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { useAuthStore } from '../stores';
@@ -15,8 +15,10 @@ type AuthMode = 'login' | 'register';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useTranslation();
   const { login, register, isLoading, error, clearError, isAuthenticated } = useAuthStore();
+  const redirectUrl = searchParams.get('redirect') || '/machines';
 
   const [mode, setMode] = useState<AuthMode>('login');
   const [formData, setFormData] = useState({
@@ -30,9 +32,9 @@ export const LoginPage: React.FC = () => {
   // 已登录则跳转
   React.useEffect(() => {
     if (isAuthenticated) {
-      navigate('/machines');
+      navigate(redirectUrl);
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, redirectUrl]);
 
   // 清除错误
   React.useEffect(() => {
@@ -107,7 +109,7 @@ export const LoginPage: React.FC = () => {
         };
         await register(data);
       }
-      navigate('/machines');
+      navigate(redirectUrl);
     } catch {
       // 错误已在store中处理
     }
