@@ -1,4 +1,4 @@
-# CC-Remote Server + Web 一键运行
+# CC-Remote Server + Web + Bot 一键运行
 # 构建：docker compose build
 # 运行：docker compose up -d
 # 日志：docker compose logs -f
@@ -19,9 +19,12 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-}
+      BOT_SERVICE_URL: http://bot:3001
     volumes:
       - cc-remote-data:/app/data
     restart: unless-stopped
+    depends_on:
+      - bot
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));\""]
       interval: 30s
@@ -29,5 +32,25 @@ services:
       retries: 3
       start_period: 15s
 
+  bot:
+    build:
+      context: .
+      dockerfile: packages/bot/Dockerfile
+    image: cc-remote-bot:latest
+    container_name: cc-remote-bot
+    environment:
+      NODE_ENV: production
+      SERVER_URL: http://app:3000
+      BOT_PORT: 3001
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
+      FEISHU_ENCRYPT_KEY: ${FEISHU_ENCRYPT_KEY:-}
+    volumes:
+      - bot-data:/app/data
+    restart: unless-stopped
+
 volumes:
   cc-remote-data:
+  bot-data:

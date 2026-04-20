@@ -116,10 +116,9 @@ export const BindBotPage: React.FC = () => {
         chat_id: chatId,
       });
 
-      // Notify bot service so it can establish Socket.IO connection
-      const botServiceUrl = import.meta.env.VITE_BOT_SERVICE_URL || 'http://localhost:3001';
+      // Notify bot service via server proxy so it can establish Socket.IO connection
       try {
-        await fetch(`${botServiceUrl}/api/bind/callback`, {
+        await fetch('/api/bind/callback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
