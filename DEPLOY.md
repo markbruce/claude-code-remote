@@ -1,24 +1,54 @@
 # CC-Remote 部署与使用说明
 
-本文档面向生产部署与交付，包含：Docker 部署（Server + Web）、Agent 命令行工具安装、以及端到端使用流程。
+本文档面向生产部署与交付，包含：Docker 部署（Server + Web + Bot）、Agent 命令行工具安装、以及端到端使用流程。
 
 ---
 
-## 一、Docker 部署（Server + Web）
+## 一、Docker 部署（Server + Web + Bot）
 
-服务端与 Web 前端打包为单一镜像，一次运行即可对外提供 API 与 Web 界面。
+使用 `docker compose` 一键运行 Server（含 Web 前端）和 Bot 服务。两个容器通过 Docker 内网通信，只需对外暴露一个端口。
 
 ### 1.1 构建镜像
 
 在仓库根目录执行（需已安装 Docker、Docker Compose）：
 
 ```bash
-# 使用 docker compose 构建（推荐）
+# 构建 Server + Bot 镜像
 docker compose build
-
-# 或使用 docker build 指定 Dockerfile
-docker build -f packages/server/Dockerfile -t cc-remote:latest .
 ```
+
+### 1.2 配置环境变量
+
+在仓库根目录创建 `.env` 文件：
+
+```env
+# === Server ===
+JWT_SECRET=your-production-secret-key    # 必改
+JWT_EXPIRES_IN=7d
+CORS_ORIGIN=
+
+# === Bot（按需启用，不配置则不启用对应平台）===
+TELEGRAM_BOT_TOKEN=
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_VERIFICATION_TOKEN=
+FEISHU_ENCRYPT_KEY=
+```
+
+### 1.3 运行容器
+
+```bash
+# 后台运行
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 仅查看 Bot 日志
+docker compose logs -f bot
+```
+
+对外只需暴露端口 **3000**（Server + Web），Bot 在内网运行不对外暴露。Bind 流程通过 Server 反向代理 `/api/bind/*` 到 Bot 容器，浏览器无需直连 Bot。
 
 ### 1.2 运行容器
 
@@ -35,45 +65,38 @@ docker compose logs -f
 
 默认将宿主机端口 **3000** 映射到容器内 3000；Web 与 API 均通过 `http://<主机>:3000` 访问。
 
-### 1.3 环境变量（生产必改）
+### 1.4 环境变量
 
-通过环境变量或 `.env` 文件传入（docker compose 会读取当前目录 `.env`）：
+| 变量 | 适用容器 | 说明 | 默认值 |
+|------|----------|------|--------|
+| `JWT_SECRET` | app | JWT 签名密钥，**生产必须修改** | `change-me-in-production` |
+| `JWT_EXPIRES_IN` | app | Token 有效期 | `7d` |
+| `CORS_ORIGIN` | app | 允许的 Web 来源，不设则允许所有 | - |
+| `PORT` | app | 容器内监听端口 | `3000` |
+| `DATABASE_URL` | app | 数据库路径（容器内） | `file:/app/data/cc-remote.db` |
+| `BOT_SERVICE_URL` | app | Bot 服务内网地址 | `http://bot:3001` |
+| `TELEGRAM_BOT_TOKEN` | bot | Telegram Bot Token | - |
+| `FEISHU_APP_ID` | bot | 飞书自建应用 App ID | - |
+| `FEISHU_APP_SECRET` | bot | 飞书自建应用 App Secret | - |
+| `FEISHU_VERIFICATION_TOKEN` | bot | 飞书事件订阅验证 Token | - |
+| `FEISHU_ENCRYPT_KEY` | bot | 飞书事件加密 Key | - |
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `JWT_SECRET` | JWT 签名密钥，**生产必须修改** | `change-me-in-production` |
-| `JWT_EXPIRES_IN` | Token 有效期 | `7d` |
-| `CORS_ORIGIN` | 允许的 Web 来源，不设则允许所有 | - |
-| `PORT` | 容器内监听端口 | `3000` |
-| `DATABASE_URL` | 数据库路径（容器内） | `file:/app/data/cc-remote.db` |
+### 1.5 数据持久化
 
-示例：使用自定义 JWT 并限制 CORS：
+`docker-compose.yml` 中已配置两个 volume：
+- `cc-remote-data`：Server 数据库
+- `bot-data`：Bot 会话数据库
 
-```bash
-export JWT_SECRET=your-production-secret-key
-export CORS_ORIGIN=https://your-domain.com
-docker compose up -d
-```
-
-或在项目根目录创建 `.env`：
-
-```env
-JWT_SECRET=your-production-secret-key
-JWT_EXPIRES_IN=7d
-CORS_ORIGIN=https://your-domain.com
-```
-
-### 1.4 数据持久化
-
-`docker-compose.yml` 中已配置 volume `cc-remote-data`，数据库文件保存在该 volume 中，容器删除后数据仍保留。查看 volume：
+容器删除后数据仍保留。查看 volume：
 
 ```bash
 docker volume inspect cc-remote_cc-remote-data
+docker volume inspect cc-remote_bot-data
 ```
 
-### 1.5 健康检查
+### 1.6 健康检查
 
-容器内提供 HTTP 健康检查：`GET http://localhost:3000/health`。编排或负载均衡可据此判断服务是否就绪。
+Server 容器内提供 HTTP 健康检查：`GET http://localhost:3000/health`。编排或负载均衡可据此判断服务是否就绪。
 
 ---
 
@@ -206,7 +229,11 @@ cc-agent --help
 
 Bot 包（`packages/bot`）可同时运行 Telegram 和飞书 Bot，通过 WebSocket 长连接与 Server 通信。支持在同一进程中运行两个平台。
 
-### 5.1 构建与启动
+部署方式二选一：
+- **Docker**：已在「一、Docker 部署」中包含，在 `.env` 中配置 Bot 环境变量即可
+- **源码**：在独立机器上直接运行（见下方）
+
+### 5.1 源码构建与启动
 
 ```bash
 # 在仓库根目录
