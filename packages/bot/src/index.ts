@@ -6,6 +6,14 @@
  * Supports running Telegram and Feishu simultaneously in one process.
  */
 
+// 代理支持: 设置 GLOBAL_AGENT_HTTP_PROXY 或 HTTPS_PROXY 即可
+const proxyUrl = process.env.GLOBAL_AGENT_HTTP_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+if (proxyUrl) {
+  const { ProxyAgent, setGlobalDispatcher } = require('undici') as typeof import('undici');
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  console.log(`[Bot] Proxy enabled: ${proxyUrl}`);
+}
+
 import 'dotenv/config';
 import http from 'http';
 import { Command } from 'commander';
