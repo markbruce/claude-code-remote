@@ -1,4 +1,4 @@
-# CC-Remote Server + Web 一键运行
+# CC-Remote Server + Web + Bot 一键运行
 # 构建：docker compose build
 # 运行：docker compose up -d
 # 日志：docker compose logs -f
@@ -29,5 +29,30 @@ services:
       retries: 3
       start_period: 15s
 
+  bot:
+    build:
+      context: .
+      dockerfile: packages/bot/Dockerfile
+    image: cc-remote-bot:latest
+    container_name: cc-remote-bot
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${BOT_PORT:-3001}:3001"
+    environment:
+      NODE_ENV: production
+      SERVER_URL: http://cc-remote:3000
+      BOT_PORT: 3001
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
+      FEISHU_ENCRYPT_KEY: ${FEISHU_ENCRYPT_KEY:-}
+    volumes:
+      - cc-remote-bot-data:/app/data
+    restart: unless-stopped
+
 volumes:
   cc-remote-data:
+  cc-remote-bot-data:
