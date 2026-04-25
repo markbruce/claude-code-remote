@@ -1,0 +1,35 @@
+services:
+  app:
+    image: zhangthexiaoning/cc-remote-server:latest
+    container_name: cc-remote-server
+    ports:
+      - "43311:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: file:/app/data/cc-remote.db
+      JWT_SECRET: change-me-in-production
+      JWT_EXPIRES_IN: 7d
+    volumes:
+      - /volume4/docker_config/cc_remote/data:/app/data
+    restart: always
+    tty: true
+
+  bot:
+    image: zhangthexiaoning/cc-remote-bot:latest
+    container_name: cc-remote-bot
+    depends_on:
+      - app
+    ports:
+      - "43312:3001"
+    environment:
+      NODE_ENV: production
+      SERVER_URL: http://cc-remote-server:3000
+      BOT_PORT: 3001
+      GLOBAL_AGENT_HTTP_PROXY: http://172.21.0.1:42961
+      TELEGRAM_BOT_TOKEN: ""
+      FEISHU_APP_ID: ""
+      FEISHU_APP_SECRET: ""
+    volumes:
+      - /volume4/docker_config/cc_remote/bot-data:/app/data
+    restart: always

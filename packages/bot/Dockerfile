@@ -67,4 +67,7 @@ ENV BOT_PORT=3001
 
 EXPOSE 3001
 
-CMD ["node", "dist/index.js"]
+# 代理支持: 设置 GLOBAL_AGENT_HTTP_PROXY 即可让所有 HTTP 请求走代理
+ENV GLOBAL_AGENT_HTTP_PROXY=""
+
+CMD ["node", "--require", "global-agent/bootstrap", "dist/index.js"]
