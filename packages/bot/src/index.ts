@@ -9,7 +9,7 @@
 // 代理支持: 设置 GLOBAL_AGENT_HTTP_PROXY 或 HTTPS_PROXY 即可
 const proxyUrl = process.env.GLOBAL_AGENT_HTTP_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 if (proxyUrl) {
-  // @ts-ignore — undici is bundled with Node.js 18+
+  // @ts-ignore — undici installed as explicit dependency for Alpine compatibility
   const { ProxyAgent, setGlobalDispatcher } = require('undici');
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
   console.log(`[Bot] Proxy enabled: ${proxyUrl}`);
