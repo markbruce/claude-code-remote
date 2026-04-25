@@ -3,9 +3,13 @@
  */
 
 import { Bot, InlineKeyboard } from 'grammy';
+// @ts-ignore — https-proxy-agent types not resolved in pnpm workspace
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { BotPlatform, MessageContent, PermissionRequest, BotCommand, InlineButton, FileMessage } from '../shared/platform';
 import { PermissionManager } from '../core/permission';
 import { formatPermissionPrompt } from './formatter';
+
+const proxyUrl = process.env.GLOBAL_AGENT_HTTP_PROXY || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
 type MessageHandler = (chatId: string, text: string) => void;
 type CallbackHandler = (chatId: string, action: string, data: string) => void;
@@ -21,11 +25,15 @@ export class TelegramAdapter implements BotPlatform {
 
   constructor(token: string) {
     console.log(`[TelegramAdapter] Initializing with API base: https://api.telegram.org`);
-    this.bot = new Bot(token, {
-      client: {
-        apiRoot: 'https://api.telegram.org',
-      },
-    });
+    const clientConfig: any = {
+      apiRoot: 'https://api.telegram.org',
+    };
+    if (proxyUrl) {
+      const agent = new HttpsProxyAgent(proxyUrl);
+      clientConfig.baseFetchConfig = { agent };
+      console.log(`[TelegramAdapter] Using proxy: ${proxyUrl}`);
+    }
+    this.bot = new Bot(token, { client: clientConfig });
     this.bot.catch((err) => {
       const e = err as any;
       console.error(`[TelegramAdapter] Bot error:`, e?.message || e);
