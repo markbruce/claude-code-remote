@@ -31,8 +31,8 @@ RUN pnpm build
 WORKDIR /app/packages/bot
 RUN pnpm build
 
-# 阶段2: 生产镜像
-FROM node:20-bookworm-slim AS production
+# 阶段2: 生产镜像 (Alpine，与 builder 阶段一致，兼容 musl 原生模块)
+FROM node:20-alpine AS production
 
 WORKDIR /app
 
