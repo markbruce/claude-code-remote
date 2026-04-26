@@ -448,6 +448,49 @@ router.post('/bind-feishu', authMiddleware, async (req: Request, res: Response) 
 });
 
 /**
+ * POST /api/auth/bind-bot-callback
+ * 代理浏览器到Bot服务的绑定回调（浏览器无法直接访问Docker内部Bot）
+ */
+router.post('/bind-bot-callback', async (req: Request, res: Response) => {
+  try {
+    const { platform_user_id, jwt, refresh_secret } = req.body as {
+      platform_user_id?: string;
+      jwt?: string;
+      refresh_secret?: string;
+    };
+
+    if (!platform_user_id || !jwt) {
+      res.status(HTTP_STATUS.BAD_REQUEST).json({
+        error: '缺少 platform_user_id 或 jwt',
+      });
+      return;
+    }
+
+    const BOT_SERVICE_URL = process.env.BOT_SERVICE_URL || 'http://localhost:3001';
+    const callbackRes = await fetch(`${BOT_SERVICE_URL}/api/bind/callback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform_user_id, jwt, refresh_secret }),
+    });
+
+    if (!callbackRes.ok) {
+      const text = await callbackRes.text();
+      console.error('[Auth] Bot bind callback failed:', callbackRes.status, text);
+      res.status(callbackRes.status).json({ error: 'Bot callback failed', details: text });
+      return;
+    }
+
+    const data = await callbackRes.json();
+    res.status(HTTP_STATUS.OK).json(data);
+  } catch (error) {
+    console.error('[Auth] Bot bind callback proxy error:', error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      error: 'Bot服务不可达',
+    });
+  }
+});
+
+/**
  * POST /api/auth/bot-token
  * Bot服务刷新JWT（无需认证中间件）
  */
