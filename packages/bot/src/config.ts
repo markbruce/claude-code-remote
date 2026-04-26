@@ -3,7 +3,8 @@
  */
 
 export interface BotConfig {
-  serverUrl: string;         // Claude Code Remote server URL
+  serverUrl: string;         // Claude Code Remote server URL (internal)
+  publicUrl: string;         // Public URL for user-facing bind links
   botPort: number;           // HTTP port for bind callbacks
   telegramBotToken?: string; // Telegram bot token
   // Feishu
@@ -14,8 +15,10 @@ export interface BotConfig {
 }
 
 export function loadConfig(overrides: Partial<BotConfig> = {}): BotConfig {
+  const serverUrl = overrides.serverUrl || process.env.BOT_SERVER_URL || 'http://localhost:3000';
   return {
-    serverUrl: overrides.serverUrl || process.env.BOT_SERVER_URL || 'http://localhost:3000',
+    serverUrl,
+    publicUrl: overrides.publicUrl || process.env.PUBLIC_URL || serverUrl,
     botPort: overrides.botPort || parseInt(process.env.BOT_PORT || '3001', 10),
     telegramBotToken: overrides.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN,
     feishuAppId: overrides.feishuAppId || process.env.FEISHU_APP_ID,

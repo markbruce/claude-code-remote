@@ -49,7 +49,7 @@ export function registerHandlers(adapter: FeishuAdapter, bridge: Bridge): void {
     // Generate cryptographically secure bind token
     const token = crypto.randomBytes(32).toString('hex');
     bindTokens.set(token, { chatId, createdAt: Date.now() });
-    const bindUrl = `${bridge.config.serverUrl}/bind-feishu?token=${token}&platform_user_id=${chatId}&chat_id=${chatId}`;
+    const bindUrl = `${bridge.config.publicUrl}/bind-feishu?token=${token}&platform_user_id=${chatId}&chat_id=${chatId}`;
 
     await adapter.sendMessage(chatId, {
       text: `Welcome! To bind your account, open this link in your browser:\n\n${bindUrl}\n\n(Link expires in 10 minutes)`,

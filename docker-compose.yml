@@ -19,6 +19,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       CORS_ORIGIN: ${CORS_ORIGIN:-}
+      BOT_SERVICE_URL: http://cc-remote-bot:3001
     volumes:
       - cc-remote-data:/app/data
     restart: unless-stopped
@@ -43,6 +44,7 @@ services:
     environment:
       NODE_ENV: production
       SERVER_URL: http://cc-remote:3000
+      PUBLIC_URL: ${PUBLIC_URL:-}
       BOT_PORT: 3001
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       FEISHU_APP_ID: ${FEISHU_APP_ID:-}

@@ -46,6 +46,7 @@ docker compose logs -f
 | `CORS_ORIGIN` | 允许的 Web 来源，不设则允许所有 | - |
 | `PORT` | 容器内监听端口 | `3000` |
 | `DATABASE_URL` | 数据库路径（容器内） | `file:/app/data/cc-remote.db` |
+| `BOT_SERVICE_URL` | Bot 服务地址，Server 用于验证 bind token（Docker 部署时设为 `http://cc-remote-bot:3001`） | `http://localhost:3001` |
 
 示例：使用自定义 JWT 并限制 CORS：
 
@@ -229,6 +230,7 @@ cc-bot
 | 变量 | 说明 | 必填 |
 |------|------|------|
 | `SERVER_URL` | Server 地址（如 `http://your-server:3000`） | 是 |
+| `PUBLIC_URL` | 面向用户的公网地址，用于生成 bind 链接（Docker 部署时必填） | Docker 部署时 |
 | `BOT_PORT` | Bot HTTP 服务端口（默认 `3001`） | 否 |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token（通过 @BotFather 获取） | 启用 Telegram 时 |
 | `FEISHU_APP_ID` | 飞书自建应用 App ID | 启用飞书时 |
