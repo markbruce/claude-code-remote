@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
+## [v1.3.0] - 2026-04-26
+
+### Added / 新增
+
+- Bot Docker deployment: dedicated Dockerfile for `packages/bot`, multi-stage Alpine build
+- Bot Docker 镜像部署：为 `packages/bot` 新增独立 Dockerfile，多阶段 Alpine 构建
+- `PUBLIC_URL` env var for bot: separate user-facing bind link URL from internal `SERVER_URL`, fixing Docker deployments where internal URLs are unreachable from user browsers ([#18](https://github.com/markbruce/claude-code-remote/issues/18))
+- Bot 新增 `PUBLIC_URL` 环境变量：将用户可见的绑定链接与内部 `SERVER_URL` 分离，修复 Docker 部署中内部 URL 无法从用户浏览器访问的问题
+- `BOT_SERVICE_URL` env var for server: internal URL for server→bot callbacks
+- 服务端新增 `BOT_SERVICE_URL` 环境变量：用于 server→bot 内部回调
+- HTTP proxy support for Telegram bot via `https-proxy-agent` (works with grammy's node-fetch)
+- Telegram Bot HTTP 代理支持：通过 `https-proxy-agent` 实现（兼容 grammy 的 node-fetch）
+- Bot service in `docker-compose.yml` with health-check dependency on server
+- `docker-compose.yml` 新增 bot 服务，通过 health check 依赖 server
+
+### Changed / 变更
+
+- Bot Docker production stage uses Alpine to match musl native modules (better-sqlite3)
+- Bot Docker 生产阶段改为 Alpine 以匹配 musl 原生模块（better-sqlite3）
+
+### Fixed / 修复
+
+- Fix bot bind links using internal `SERVER_URL` instead of public URL in Docker deployments
+- 修复 Bot 绑定链接在 Docker 部署中使用内部 `SERVER_URL` 而非公网 URL 的问题
+- Fix Telegram bot proxy not working with grammy (switched from global-agent/undici to https-proxy-agent)
+- 修复 Telegram Bot 代理在 grammy 下不生效的问题（从 global-agent/undici 切换为 https-proxy-agent）
+- Remove `docker-compose-nas.yml` from repository (contains personal deployment details)
+- 从仓库中移除 `docker-compose-nas.yml`（包含个人部署信息）
+
 ## [v1.2.0] - 2026-04-19
 
 ### Added / 新增

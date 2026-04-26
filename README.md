@@ -57,7 +57,23 @@ Claude Code Remote is a lightweight remote development tool that lets you access
 
 ---
 
-## 🆕 v1.2.0 Release Notes
+## 🆕 v1.3.0 Release Notes
+
+feature:
+1. Bot Docker deployment — dedicated Dockerfile with multi-stage Alpine build, CI/CD image publishing via GitHub Actions
+2. `PUBLIC_URL` env var for bot — separate user-facing bind link URL from internal `SERVER_URL`, fixing Docker deployments
+3. `BOT_SERVICE_URL` env var for server — internal URL for server→bot callbacks
+4. HTTP proxy support for Telegram bot via `https-proxy-agent` (compatible with grammy's node-fetch)
+5. Bot service in `docker-compose.yml` with health-check dependency
+
+bugfix:
+1. Fixed bot bind links using internal Docker URL instead of public URL
+2. Fixed Telegram bot proxy not working with grammy (switched from global-agent/undici to https-proxy-agent)
+3. Removed `docker-compose-nas.yml` from repository (contains personal deployment details)
+
+---
+
+## v1.2.0 Release Notes
 
 feature:
 1. Telegram Bot — full-featured bot with InlineKeyboard, streaming output, session management, file/image upload, permission approval
