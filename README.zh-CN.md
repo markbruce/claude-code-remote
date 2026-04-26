@@ -333,9 +333,8 @@ TELEGRAM_BOT_TOKEN=<你的_BotFather_令牌> node dist/index.js
    - `TELEGRAM_BOT_TOKEN` — 必填；也可在启动时传 `--bot-token <token>`
    - `BOT_SERVER_URL` — 本项目的 Server 地址（默认 `http://localhost:3000`）；可用 `--server <url>` 覆盖
    - `BOT_PORT` — Bot 本地 HTTP 服务端口，用于绑定校验与回调（默认 `3001`）；可用 `--port <port>` 覆盖
-3. **URL 对齐**：Server 与 Web 必须能访问到 Bot 的 HTTP 服务。本机开发时默认：
-   - `packages/server/.env` 中未设置时，`BOT_SERVICE_URL` 默认为 `http://localhost:3001`（需与 Bot 监听地址一致）
-   - Web 绑定页开发时，`VITE_BOT_SERVICE_URL` 默认 `http://localhost:3001`（若 Bot 部署在其他地址，可在 `packages/web/.env` 中配置）
+3. **URL 对齐**：Server 必须能访问到 Bot 的 HTTP 服务。本机开发时默认：
+   - `packages/server/.env` 中未设置时，`BOT_SERVICE_URL` 默认为 `http://localhost:3001`（需与 Bot 监听地址一致）。Server 通过此地址代理绑定回调请求到 Bot。
 4. **启动 Bot**（需先启动 Server）：
 
 ```bash

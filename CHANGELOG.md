@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
+## [v1.3.1] - 2026-04-26
+
+### Fixed / 修复
+
+- Server proxies bot bind callback to bot service via `BOT_SERVICE_URL` — browser no longer needs direct access to bot container ([#20](https://github.com/markbruce/claude-code-remote/issues/20))
+- 服务端代理 bot 绑定回调请求，浏览器不再需要直接访问 bot 容器
+- Remove `VITE_BOT_SERVICE_URL` dependency — Docker images are now deployment-agnostic
+- 移除 `VITE_BOT_SERVICE_URL` 依赖，Docker 镜像不再包含部署特定域名
+
 ## [v1.3.0] - 2026-04-26
 
 ### Added / 新增

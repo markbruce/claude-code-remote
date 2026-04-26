@@ -57,7 +57,15 @@ Claude Code Remote is a lightweight remote development tool that lets you access
 
 ---
 
-## 🆕 v1.3.0 Release Notes
+## 🆕 v1.3.1 Release Notes
+
+bugfix:
+1. Server now proxies bot bind callback — browser no longer needs direct access to bot container (fixes Docker bind failure)
+2. Removed `VITE_BOT_SERVICE_URL` — Docker images are deployment-agnostic, no domain baked in
+
+---
+
+## v1.3.0 Release Notes
 
 feature:
 1. Bot Docker deployment — dedicated Dockerfile with multi-stage Alpine build, CI/CD image publishing via GitHub Actions
@@ -373,9 +381,8 @@ TELEGRAM_BOT_TOKEN=<token> FEISHU_APP_ID=<id> FEISHU_APP_SECRET=<secret> node di
    - `TELEGRAM_BOT_TOKEN` — required unless you pass `--bot-token <token>` to `node dist/index.js`
    - `BOT_SERVER_URL` — Claude Code Remote server URL (default `http://localhost:3000`); use `--server <url>` to override
    - `BOT_PORT` — local HTTP port for bind-token verification and callbacks (default `3001`); use `--port <port>` to override
-3. **Align URLs** so binding works: the Server and Web must reach this bot HTTP service. Defaults assume everything runs on one machine:
-   - In `packages/server/.env`, `BOT_SERVICE_URL` defaults to `http://localhost:3001` if unset (must match where the bot listens).
-   - For the Web UI in dev, `VITE_BOT_SERVICE_URL` defaults to `http://localhost:3001` in `BindBotPage` (set in `packages/web/.env` if your bot runs elsewhere).
+3. **Align URLs** so binding works: the Server must be able to reach the bot's HTTP service. Defaults assume everything runs on one machine:
+   - In `packages/server/.env`, `BOT_SERVICE_URL` defaults to `http://localhost:3001` if unset (must match where the bot listens). The server uses this to proxy bind callbacks to the bot.
 4. **Start the bot** (Server should already be running):
 
 ```bash
