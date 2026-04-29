@@ -126,12 +126,13 @@ class SocketManager {
       }
 
       const namespaceUrl = `${serverUrl}${SocketNamespaces.CLIENT}`;
+      let resolved = false;
 
       this.socket = io(namespaceUrl, {
         auth: { shareToken },
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: this.maxReconnectAttempts,
+        reconnectionAttempts: 10,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
       });
@@ -140,15 +141,24 @@ class SocketManager {
         console.log('[Socket] Viewer connected');
         useSocketStore.setState({ isConnected: true, isConnecting: false });
         this.reconnectAttempts = 0;
-        resolve(this.socket!);
 
         // 自动加入分享的会话
         this.socket!.emit(SocketEvents.JOIN_SHARED_SESSION, { shareToken });
+
+        if (!resolved) {
+          resolved = true;
+          resolve(this.socket!);
+        }
       });
 
       this.socket.on('connect_error', (error: Error) => {
         console.error('[Socket] Viewer 连接错误:', error.message);
-        reject(new Error(`连接失败: ${error.message}`));
+        this.reconnectAttempts++;
+        // 仅首次连接失败时 reject
+        if (!resolved && this.reconnectAttempts >= this.maxReconnectAttempts) {
+          resolved = true;
+          reject(new Error(`连接失败: ${error.message}`));
+        }
       });
 
       this.socket.on('disconnect', (reason: Socket.DisconnectReason) => {
@@ -221,6 +231,22 @@ class SocketManager {
     // Chat 模式事件
     this.socket.on(SocketEvents.CHAT_MESSAGE, (data: unknown) => {
       this.notifyListeners(SocketEvents.CHAT_MESSAGE, data);
+    });
+
+    this.socket.on(SocketEvents.CHAT_TOOL_USE, (data: unknown) => {
+      this.notifyListeners(SocketEvents.CHAT_TOOL_USE, data);
+    });
+
+    this.socket.on(SocketEvents.CHAT_TOOL_RESULT, (data: unknown) => {
+      this.notifyListeners(SocketEvents.CHAT_TOOL_RESULT, data);
+    });
+
+    this.socket.on(SocketEvents.CHAT_COMPLETE, (data: unknown) => {
+      this.notifyListeners(SocketEvents.CHAT_COMPLETE, data);
+    });
+
+    this.socket.on(SocketEvents.CHAT_ERROR, (data: unknown) => {
+      this.notifyListeners(SocketEvents.CHAT_ERROR, data);
     });
 
     this.socket.on(SocketEvents.CHAT_PERMISSION_REQUEST, (data: unknown) => {
