@@ -16,4 +16,4 @@ release/binary/
 *.tar.gz
 claudecodeui/
 for_debug/
-.idea/
+.idea/docker-compose-nas.yml

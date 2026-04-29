@@ -11,6 +11,7 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME_SERVER: zhangthexiaoning/cc-remote-server
+  IMAGE_NAME_BOT: zhangthexiaoning/cc-remote-bot
   IMAGE_NAME_AGENT: zhangthexiaoning/cc-remote-agent
 
 permissions:
@@ -44,7 +45,10 @@ jobs:
       - name: Build agent
         run: pnpm --filter cc-remote-agent build
 
-  # 构建 Docker 镜像（仅 tag 触发，多架构构建并推送）
+      - name: Build bot
+        run: pnpm --filter cc-remote-bot build
+
+  # 构建 Server Docker 镜像（仅 tag 触发，多架构构建并推送）
   build-server:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
@@ -80,6 +84,47 @@ jobs:
         with:
           context: .
           file: packages/server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # 构建 Bot Docker 镜像（仅 tag 触发，多架构构建并推送）
+  build-bot:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BOT }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image (multi-arch)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: packages/bot/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

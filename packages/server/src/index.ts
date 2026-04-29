@@ -116,6 +116,14 @@ app.get('/health', async (req, res) => {
   }
 });
 
+// 开发模式：将前端路由重定向到 Vite dev server
+if (process.env.NODE_ENV !== 'production') {
+  const webPort = process.env.VITE_PORT || '5173';
+  app.get('/bind-*', (req, res) => {
+    res.redirect(`http://localhost:${webPort}${req.originalUrl}`);
+  });
+}
+
 // 生产模式：提供静态文件
 if (process.env.NODE_ENV === 'production') {
   const webDistPath = path.join(__dirname, '..', 'web');

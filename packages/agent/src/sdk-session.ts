@@ -107,6 +107,8 @@ export class SdkSession extends EventEmitter {
   private queryInstance: Query | null = null;
   private abortController = new AbortController();
   private pendingPermissions = new Map<string, PermissionResolver>();
+  private streamedMessageIds = new Set<string>();
+  private completeEmitted = false;
   private startTime: Date;
 
   constructor(config: SdkSessionConfig) {
@@ -318,7 +320,10 @@ export class SdkSession extends EventEmitter {
       }
     } finally {
       // Ensure 'complete' is always emitted so the web UI doesn't get stuck in "generating"
-      this.emitChatEvent('complete', {});
+      // Only emit if not already emitted by the 'result' message (avoids clearing tokenUsage)
+      if (!this.completeEmitted) {
+        this.emitChatEvent('complete', {});
+      }
       if (this.state !== SdkSessionState.ENDED) {
         this.state = SdkSessionState.ENDED;
         this.emit('end', {
@@ -352,8 +357,8 @@ export class SdkSession extends EventEmitter {
         if (assistantMsg.message?.content) {
           for (const block of assistantMsg.message.content) {
             if (typeof block === 'object' && 'type' in block) {
-              if (block.type === 'tool_result') {
-                const resultBlock = block as { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean };
+              if ((block as { type: string }).type === 'tool_result') {
+                const resultBlock = block as unknown as { type: 'tool_result'; tool_use_id: string; content?: unknown; is_error?: boolean };
                 this.emitChatEvent('tool_result', {
                   toolId: resultBlock.tool_use_id,
                   toolResult: typeof resultBlock.content === 'string'
@@ -361,6 +366,15 @@ export class SdkSession extends EventEmitter {
                     : JSON.stringify(resultBlock.content),
                   isError: resultBlock.is_error ?? false,
                 });
+              } else if (block.type === 'text') {
+                const textBlock = block as { type: 'text'; text?: string };
+                if (textBlock.text) {
+                  const msgId = (assistantMsg as { message?: { id?: string } }).message?.id;
+                  // Only emit if this message wasn't already delivered via stream_event
+                  if (!msgId || !this.streamedMessageIds.has(msgId)) {
+                    this.emitChatEvent('text', { content: textBlock.text });
+                  }
+                }
               }
             }
           }
@@ -398,6 +412,7 @@ export class SdkSession extends EventEmitter {
             ? { input: message.usage.input_tokens, output: message.usage.output_tokens }
             : undefined,
         });
+        this.completeEmitted = true;
         break;
 
       default:
@@ -449,6 +464,9 @@ export class SdkSession extends EventEmitter {
       }
 
       case 'message_start':
+        if (event.message?.id) {
+          this.streamedMessageIds.add(event.message.id);
+        }
         this.emitChatEvent('text', { content: '' });
         break;
 

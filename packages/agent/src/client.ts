@@ -473,6 +473,20 @@ export class AgentClient extends EventEmitter {
     // 否则会为同一会话注册多组 chat-message 监听，导致每条消息被多次转发、前端出现「我们我们我们」式重复
     const existing = sdkSessionManager.getSession(sessionId);
     if (existing) {
+      if (existing.isRunning()) {
+        // Session is still active — reuse it instead of killing the running SDK query.
+        // Killing a running session mid-query causes "Operation aborted" from the SDK.
+        console.log(`[Agent] 会话已存在且活跃，复用: ${sessionId}`);
+        this.socket?.emit(SocketEvents.SESSION_STARTED, {
+          session_id: sessionId,
+          project_path: data.project_path,
+          mode: 'chat',
+          request_id: data.request_id,
+          isHistory: !!data.options?.resume,
+        });
+        return;
+      }
+      // Session exists but ended — clean up and recreate
       console.log(`[Agent] 结束已存在的同 session 会话后再创建: ${sessionId}`);
       await sdkSessionManager.endSession(sessionId);
     }
