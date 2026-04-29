@@ -121,29 +121,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
           {isSharing ? (
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-green-600 dark:text-green-400">
-                👁 {viewersCount} viewer{viewersCount !== 1 ? 's' : ''}
+                👁 {t('share.viewers', { count: viewersCount })}
               </span>
               <button
                 onClick={handleShare}
                 className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                title="Copy link"
+                title={t('share.copyLink')}
               >
-                Copy Link
+                {t('share.copyLink')}
               </button>
               <button
                 onClick={handleStopShare}
                 className="text-xs px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
               >
-                Stop
+                {t('share.stop')}
               </button>
             </div>
           ) : (
             <button
               onClick={handleShare}
               className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-              title="Share session"
+              title={t('share.title')}
             >
-              Share
+              {t('share.share')}
             </button>
           )}
           <TokenUsagePanel

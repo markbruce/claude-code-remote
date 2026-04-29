@@ -2,8 +2,9 @@
  * SharedSessionPage — 访客只读查看页面
  * 无需登录，通过 URL 中的 shareToken 连接到分享的会话
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { SocketEvents } from 'cc-remote-shared';
 import { ChatMessagesPane } from '../components/chat/ChatMessagesPane';
 import { TokenUsagePanel } from '../components/chat/TokenUsagePanel';
@@ -19,8 +20,10 @@ const genSysId = (() => {
 
 export const SharedSessionPage: React.FC = () => {
   const { shareToken } = useParams<{ shareToken: string }>();
+  const { t } = useTranslation();
   const [isConnecting, setIsConnecting] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   const {
     messages,
@@ -29,16 +32,9 @@ export const SharedSessionPage: React.FC = () => {
     handleChatEvent,
   } = useChatStore();
 
-  // 连接到分享会话
-  useEffect(() => {
-    if (!shareToken) {
-      setError('缺少分享链接');
-      setIsConnecting(false);
-      return;
-    }
-
-    const serverUrl = window.location.origin;
+  const connectAsViewer = useCallback((serverUrl: string, token: string) => {
     setIsConnecting(true);
+    setError(null);
 
     // 注册消息监听
     const unsubChatMessage = socketManager.on(SocketEvents.CHAT_MESSAGE, (data: unknown) => {
@@ -56,7 +52,7 @@ export const SharedSessionPage: React.FC = () => {
       handleChatEvent(event);
     });
 
-    const unsubChatComplete = socketManager.on(SocketEvents.CHAT_COMPLETE, (data: unknown) => {
+    const unsubChatComplete = socketManager.on(SocketEvents.CHAT_COMPLETE, () => {
       useChatStore.setState({ isGenerating: false });
     });
 
@@ -67,21 +63,27 @@ export const SharedSessionPage: React.FC = () => {
     });
 
     const unsubStopShare = socketManager.on(SocketEvents.STOP_SHARE, () => {
-      setError('会话分享已结束');
+      setError(t('share.stopped'));
+      socketManager.disconnect();
     });
 
     const unsubDisconnect = socketManager.on('disconnect', () => {
-      setError('连接已断开');
+      setIsReconnecting(true);
+    });
+
+    const unsubReconnect = socketManager.on('client:connected', () => {
+      setIsReconnecting(false);
     });
 
     // 以 viewer 身份连接
-    socketManager.connectAsViewer(serverUrl, shareToken)
+    socketManager.connectAsViewer(serverUrl, token)
       .then(() => {
         setIsConnecting(false);
+        setIsReconnecting(false);
         const sysMsg: ChatMessage = {
           id: genSysId(),
           type: 'assistant',
-          content: '📋 您正在以只读模式查看此会话。无法发送消息或审批权限。',
+          content: `📋 ${t('share.cannotSend')}`,
           timestamp: new Date(),
         };
         useChatStore.setState((s) => ({ messages: [...s.messages, sysMsg] }));
@@ -99,23 +101,39 @@ export const SharedSessionPage: React.FC = () => {
       unsubError();
       unsubStopShare();
       unsubDisconnect();
+      unsubReconnect();
       socketManager.disconnect();
       useChatStore.setState({ messages: [], isGenerating: false });
     };
-  }, [shareToken]);
+  }, [handleChatEvent, t]);
+
+  // 连接到分享会话
+  useEffect(() => {
+    if (!shareToken) {
+      setError(t('share.invalidToken'));
+      setIsConnecting(false);
+      return;
+    }
+
+    const serverUrl = window.location.origin;
+    const cleanup = connectAsViewer(serverUrl, shareToken);
+    return cleanup;
+  }, [shareToken, connectAsViewer]);
 
   if (error) {
     return (
       <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center space-y-4">
           <div className="text-4xl">🔒</div>
-          <h1 className="text-xl font-semibold text-gray-700 dark:text-gray-200">无法访问</h1>
+          <h1 className="text-xl font-semibold text-gray-700 dark:text-gray-200">
+            {t('common.failed')}
+          </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400">{error}</p>
           <button
             onClick={() => window.location.reload()}
             className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
           >
-            重试
+            {t('common.retry')}
           </button>
         </div>
       </div>
@@ -127,7 +145,7 @@ export const SharedSessionPage: React.FC = () => {
       <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="text-center space-y-3">
           <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-sm text-gray-500 dark:text-gray-400">正在连接分享会话...</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('share.connecting')}</p>
         </div>
       </div>
     );
@@ -138,10 +156,17 @@ export const SharedSessionPage: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Shared Session</span>
-          <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-            Viewing
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            {t('share.title')}
           </span>
+          <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+            {t('share.viewing')}
+          </span>
+          {isReconnecting && (
+            <span className="text-xs px-1.5 py-0.5 rounded bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 animate-pulse">
+              {t('share.reconnecting')}
+            </span>
+          )}
         </div>
         <TokenUsagePanel
           used={tokenUsage?.total || 0}

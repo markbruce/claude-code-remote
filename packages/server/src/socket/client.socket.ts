@@ -899,30 +899,3 @@ export function handleClientConnection(socket: ClientSocket) {
     console.error(`[Client] Socket error: ${socket.id}`, error);
   });
 }
-
-/**
- * 向指定会话的所有客户端广播事件
- */
-export function broadcastToSession(
-  sessionId: string,
-  event: string,
-  data: unknown
-) {
-  const sessionInfo = sessions.get(sessionId);
-  if (sessionInfo) {
-    // 使用io实例广播到session房间
-    // 这个函数将在index.ts中通过io实例实现
-  }
-}
-
-/**
- * 向指定机器的所有客户端广播事件
- */
-export function broadcastToMachine(
-  machineId: string,
-  event: string,
-  data: unknown
-) {
-  // 使用io实例广播到machine房间
-  // 这个函数将在index.ts中通过io实例实现
-}
