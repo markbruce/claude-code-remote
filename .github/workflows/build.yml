@@ -199,7 +199,13 @@ jobs:
       - name: Build shared and agent
         run: pnpm run build:agent
 
-      - name: Publish to npm
+      - name: Publish shared to npm
+        run: |
+          pnpm --filter cc-remote-shared publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish agent to npm
         run: |
           pnpm --filter cc-remote-agent publish --access public --no-git-checks
         env:
