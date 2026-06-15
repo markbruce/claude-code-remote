@@ -321,6 +321,8 @@ export class AgentClient extends EventEmitter {
       this.lastError = error;
       // 认证类错误：停止无限重连（Infinity 会一直用失效 token 撞服务器），交由上层决定是否重新绑定
       if (isAuthError(error)) {
+        // 防止 disconnect 生效前 connect_error 重复触发导致 auth_failed 多次 emit（堆叠重绑提示）
+        if (this.state === ClientState.DISCONNECTED) return;
         this.stopHeartbeat();
         this.state = ClientState.DISCONNECTED;
         this.socket?.disconnect();
