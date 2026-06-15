@@ -89,8 +89,6 @@ export class AgentClient extends EventEmitter {
   private reconnectAttempts = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private configManager: ConfigManager;
-  // 最近一次连接/认证错误，用于 reconnect_failed 时区分认证 vs 网络
-  private lastError: unknown = null;
 
   constructor(config: ClientConfig, configManager: ConfigManager) {
     super();
@@ -102,14 +100,6 @@ export class AgentClient extends EventEmitter {
       ...config,
     };
     this.configManager = configManager;
-  }
-
-  /**
-   * 返回最近一次连接错误，供上层判断是否需要重新绑定。
-   * 认证类错误 isAuthError() 为 true；网络类错误为 false。
-   */
-  getLastError(): unknown {
-    return this.lastError;
   }
 
   /**
@@ -174,7 +164,6 @@ export class AgentClient extends EventEmitter {
     this.socket.on('connect', () => {
       console.log('Socket已连接');
       this.reconnectAttempts = 0;
-      this.lastError = null;
       this.startHeartbeat();
     });
 
@@ -188,7 +177,6 @@ export class AgentClient extends EventEmitter {
     // 认证失败/错误
     this.socket.on(SocketEvents.ERROR, (error) => {
       console.error('服务器错误:', error);
-      this.lastError = error;
       this.emit('error', error);
 
       // 仅认证类错误才主动断开（触发后续重新绑定）；网络类错误交给 socket.io 重连
@@ -318,7 +306,6 @@ export class AgentClient extends EventEmitter {
 
     // 持续记录每次连接错误（connect() 内另有 once('connect_error') 用于首次连接的 Promise 拒绝，二者不冲突）
     this.socket.on('connect_error', (error) => {
-      this.lastError = error;
       // 认证类错误：停止无限重连（Infinity 会一直用失效 token 撞服务器），交由上层决定是否重新绑定
       if (isAuthError(error)) {
         // 防止 disconnect 生效前 connect_error 重复触发导致 auth_failed 多次 emit（堆叠重绑提示）
