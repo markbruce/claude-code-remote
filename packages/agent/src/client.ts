@@ -105,8 +105,8 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
-   * 返回最近一次连接错误，供上层（index.ts）在 reconnect_failed 时判断
-   * 是否需要重新绑定。网络类错误返回的对象 isAuthError() 为 false。
+   * 返回最近一次连接错误，供上层判断是否需要重新绑定。
+   * 认证类错误 isAuthError() 为 true；网络类错误为 false。
    */
   getLastError(): unknown {
     return this.lastError;
@@ -174,6 +174,7 @@ export class AgentClient extends EventEmitter {
     this.socket.on('connect', () => {
       console.log('Socket已连接');
       this.reconnectAttempts = 0;
+      this.lastError = null;
       this.startHeartbeat();
     });
 
@@ -315,9 +316,16 @@ export class AgentClient extends EventEmitter {
       await this.handleValidatePath(data);
     });
 
-    // 记录每次重连失败的错误，供 getLastError() 使用
+    // 持续记录每次连接错误（connect() 内另有 once('connect_error') 用于首次连接的 Promise 拒绝，二者不冲突）
     this.socket.on('connect_error', (error) => {
       this.lastError = error;
+      // 认证类错误：停止无限重连（Infinity 会一直用失效 token 撞服务器），交由上层决定是否重新绑定
+      if (isAuthError(error)) {
+        this.stopHeartbeat();
+        this.state = ClientState.DISCONNECTED;
+        this.socket?.disconnect();
+        this.emit('auth_failed', error);
+      }
     });
 
     // 断开连接
@@ -339,7 +347,8 @@ export class AgentClient extends EventEmitter {
     // 重连尝试
     this.socket.on('reconnect_attempt', (attempt) => {
       this.reconnectAttempts = attempt;
-      console.log(`重连尝试 ${attempt}/${this.config.maxReconnectAttempts}`);
+      const total = this.config.maxReconnectAttempts;
+      console.log(Number.isFinite(total) ? `重连尝试 ${attempt}/${total}` : `重连尝试 ${attempt}`);
       this.emit('reconnecting', attempt);
     });
 
