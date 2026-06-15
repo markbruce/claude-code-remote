@@ -47,6 +47,7 @@ import {
 import os from 'os';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { isAuthError } from './errors';
 import { ConfigManager } from './config';
 import { projectScanner } from './scanner';
 import { sessionManager } from './session';
@@ -88,16 +89,27 @@ export class AgentClient extends EventEmitter {
   private reconnectAttempts = 0;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private configManager: ConfigManager;
+  // 最近一次连接/认证错误，用于 reconnect_failed 时区分认证 vs 网络
+  private lastError: unknown = null;
 
   constructor(config: ClientConfig, configManager: ConfigManager) {
     super();
     this.config = {
       autoReconnect: true,
       reconnectDelay: 5000,
-      maxReconnectAttempts: 10,
+      // 无限重连：网络恢复后自动重连，避免短暂断网导致永久失联（#22）
+      maxReconnectAttempts: Infinity,
       ...config,
     };
     this.configManager = configManager;
+  }
+
+  /**
+   * 返回最近一次连接错误，供上层（index.ts）在 reconnect_failed 时判断
+   * 是否需要重新绑定。网络类错误返回的对象 isAuthError() 为 false。
+   */
+  getLastError(): unknown {
+    return this.lastError;
   }
 
   /**
@@ -175,10 +187,11 @@ export class AgentClient extends EventEmitter {
     // 认证失败/错误
     this.socket.on(SocketEvents.ERROR, (error) => {
       console.error('服务器错误:', error);
+      this.lastError = error;
       this.emit('error', error);
 
-      // 如果是认证错误，断开连接
-      if (error.message?.includes('授权') || error.message?.includes('token')) {
+      // 仅认证类错误才主动断开（触发后续重新绑定）；网络类错误交给 socket.io 重连
+      if (isAuthError(error)) {
         this.disconnect();
       }
     });
@@ -300,6 +313,11 @@ export class AgentClient extends EventEmitter {
     // 路径验证
     this.socket.on(SocketEvents.VALIDATE_PATH, async (data: ValidatePathRequest) => {
       await this.handleValidatePath(data);
+    });
+
+    // 记录每次重连失败的错误，供 getLastError() 使用
+    this.socket.on('connect_error', (error) => {
+      this.lastError = error;
     });
 
     // 断开连接
