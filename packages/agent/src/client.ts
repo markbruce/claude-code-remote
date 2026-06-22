@@ -47,6 +47,7 @@ import {
 import os from 'os';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { isAuthError } from './errors';
 import { ConfigManager } from './config';
 import { projectScanner } from './scanner';
 import { sessionManager } from './session';
@@ -94,7 +95,8 @@ export class AgentClient extends EventEmitter {
     this.config = {
       autoReconnect: true,
       reconnectDelay: 5000,
-      maxReconnectAttempts: 10,
+      // 无限重连：网络恢复后自动重连，避免短暂断网导致永久失联（#22）
+      maxReconnectAttempts: Infinity,
       ...config,
     };
     this.configManager = configManager;
@@ -177,8 +179,8 @@ export class AgentClient extends EventEmitter {
       console.error('服务器错误:', error);
       this.emit('error', error);
 
-      // 如果是认证错误，断开连接
-      if (error.message?.includes('授权') || error.message?.includes('token')) {
+      // 仅认证类错误才主动断开（触发后续重新绑定）；网络类错误交给 socket.io 重连
+      if (isAuthError(error)) {
         this.disconnect();
       }
     });
@@ -302,6 +304,19 @@ export class AgentClient extends EventEmitter {
       await this.handleValidatePath(data);
     });
 
+    // 持续记录每次连接错误（connect() 内另有 once('connect_error') 用于首次连接的 Promise 拒绝，二者不冲突）
+    this.socket.on('connect_error', (error) => {
+      // 认证类错误：停止无限重连（Infinity 会一直用失效 token 撞服务器），交由上层决定是否重新绑定
+      if (isAuthError(error)) {
+        // 防止 disconnect 生效前 connect_error 重复触发导致 auth_failed 多次 emit（堆叠重绑提示）
+        if (this.state === ClientState.DISCONNECTED) return;
+        this.stopHeartbeat();
+        this.state = ClientState.DISCONNECTED;
+        this.socket?.disconnect();
+        this.emit('auth_failed', error);
+      }
+    });
+
     // 断开连接
     this.socket.on('disconnect', (reason) => {
       console.log('连接断开:', reason);
@@ -321,7 +336,8 @@ export class AgentClient extends EventEmitter {
     // 重连尝试
     this.socket.on('reconnect_attempt', (attempt) => {
       this.reconnectAttempts = attempt;
-      console.log(`重连尝试 ${attempt}/${this.config.maxReconnectAttempts}`);
+      const total = this.config.maxReconnectAttempts;
+      console.log(Number.isFinite(total) ? `重连尝试 ${attempt}/${total}` : `重连尝试 ${attempt}`);
       this.emit('reconnecting', attempt);
     });
 

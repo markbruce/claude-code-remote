@@ -474,8 +474,11 @@ async function smartMode(options: { rebind?: boolean; force?: boolean; nonIntera
     }
   });
 
-  client.on('reconnect_failed', async () => {
-    console.log(chalk.red('❌ 重连失败'));
+  // 认证失败：token 失效或机器未注册，需要重新绑定
+  // （client.ts 在 connect_error 中识别认证错误后会停止重连并发此事件）
+  client.on('auth_failed', async (error: unknown) => {
+    console.error('认证失败详情:', error);
+    console.log(chalk.red('❌ 认证失败，可能需要重新绑定'));
 
     const { rebind } = await inquirer.prompt([
       {
@@ -493,6 +496,13 @@ async function smartMode(options: { rebind?: boolean; force?: boolean; nonIntera
     } else {
       process.exit(1);
     }
+  });
+
+  // 防御性兜底：无限重连下 reconnect_failed 正常不应触发
+  // （网络错误会一直重连，认证错误走 auth_failed）。若仍到此分支，
+  // 仅记录并保持进程存活，避免误清 machine_token。
+  client.on('reconnect_failed', () => {
+    console.log(chalk.red('❌ 重连失败（未知原因），保持进程存活，请检查网络后重启 Agent'));
   });
 
   client.on('error', (error) => {

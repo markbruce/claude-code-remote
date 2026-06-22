@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 本文件记录项目的所有重要变更。
 
+## [Unreleased]
+
+### Fixed / 修复
+
+- Agent now reconnects indefinitely after network outages — previously it gave up after 10 failed attempts (~50s) and left the machine permanently disconnected, requiring a manual restart or destructive rebind ([#22](https://github.com/markbruce/claude-code-remote/issues/22))
+- Agent 网络断开后改为无限重连：原先重连 10 次（约 50 秒）即放弃，导致机器永久掉线，需要手动重启或重新绑定
+- Auth failures (expired/invalid token, unregistered machine) now stop reconnecting cleanly and surface the rebind prompt via a dedicated `auth_failed` path, instead of only after exhausting all retries
+- 认证失败（token 失效 / 机器未注册）现在会干净地停止重连并通过独立的 `auth_failed` 事件触发重新绑定提示，而不是等重试耗尽后才出现
+- Network errors no longer trigger the destructive rebind prompt — only genuine auth errors do
+- 网络类错误不再触发破坏性的重新绑定提示，仅认证类错误才会
+
 ## [v1.3.1] - 2026-04-26
 
 ### Fixed / 修复
