@@ -17,6 +17,9 @@ interface SocketConfig {
 // 事件回调类型
 type EventCallback<T = unknown> = (data: T) => void;
 
+// 访客（shareToken）连接的重连上限；JWT 路径使用实例字段 maxReconnectAttempts
+const VIEWER_MAX_RECONNECT_ATTEMPTS = 10;
+
 // Socket 管理器类
 class SocketManager {
   private socket: Socket | null = null;
@@ -132,7 +135,7 @@ class SocketManager {
         auth: { shareToken },
         transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: VIEWER_MAX_RECONNECT_ATTEMPTS,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
       });
@@ -158,7 +161,7 @@ class SocketManager {
         console.error('[Socket] Viewer 连接错误:', error.message);
         this.reconnectAttempts++;
         // 仅首次连接失败时 reject
-        if (!resolved && this.reconnectAttempts >= this.maxReconnectAttempts) {
+        if (!resolved && this.reconnectAttempts >= VIEWER_MAX_RECONNECT_ATTEMPTS) {
           resolved = true;
           reject(new Error(`连接失败: ${error.message}`));
         }
