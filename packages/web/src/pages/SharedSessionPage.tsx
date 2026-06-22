@@ -75,6 +75,11 @@ export const SharedSessionPage: React.FC = () => {
       setIsReconnecting(false);
     });
 
+    // 访客不会收到 client:connected，监听 socket 原生 connect 事件以可靠清除重连提示
+    const unsubSocketConnect = socketManager.on('connect', () => {
+      setIsReconnecting(false);
+    });
+
     // 以 viewer 身份连接
     socketManager.connectAsViewer(serverUrl, token)
       .then(() => {
@@ -102,6 +107,7 @@ export const SharedSessionPage: React.FC = () => {
       unsubStopShare();
       unsubDisconnect();
       unsubReconnect();
+      unsubSocketConnect();
       socketManager.disconnect();
       useChatStore.setState({ messages: [], isGenerating: false });
     };

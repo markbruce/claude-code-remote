@@ -142,6 +142,9 @@ class SocketManager {
         useSocketStore.setState({ isConnected: true, isConnecting: false });
         this.reconnectAttempts = 0;
 
+        // 通知 connect 事件（访客不会收到 client:connected，页面据此清除重连提示）
+        this.notifyListeners('connect', {});
+
         // 自动加入分享的会话
         this.socket!.emit(SocketEvents.JOIN_SHARED_SESSION, { shareToken });
 
