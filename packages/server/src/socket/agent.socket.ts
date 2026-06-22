@@ -333,11 +333,18 @@ export function handleAgentConnection(socket: AgentSocket) {
     }
   });
 
-  // Chat 模式：转发权限请求（Agent -> Client）
+  // Chat 模式：转发权限请求（Agent -> Client），排除只读访客（权限细节不向访客泄露）
   socket.on(SocketEvents.CHAT_PERMISSION_REQUEST, (data: ChatPermissionRequestEvent) => {
     const io = getIoInstance();
-    if (io) {
-      io.of(SocketNamespaces.CLIENT).to(`session:${data.session_id}`).emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
+    if (!io) return;
+    const clientNs = io.of(SocketNamespaces.CLIENT);
+    const room = clientNs.adapter.rooms.get(`session:${data.session_id}`);
+    if (!room) return;
+    for (const sid of room) {
+      const s = clientNs.sockets.get(sid);
+      if (s && !(s.data as { isViewer?: boolean })?.isViewer) {
+        s.emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
+      }
     }
   });
 
