@@ -2,7 +2,7 @@ module.exports = {
   projects: [
     '<rootDir>/packages/server/jest.config.js',
     '<rootDir>/packages/agent/jest.config.js',
-    '<rootDir>/packages/shared/jest.config.js',
+    '<rootDir>/packages/shared/jest.config.cjs',
   ],
   collectCoverage: true,
   coverageDirectory: '<rootDir>/coverage',
