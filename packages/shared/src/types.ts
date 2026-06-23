@@ -2,6 +2,8 @@
  * Claude Code Remote - 共享类型定义
  */
 
+import type { ApprovalMode, Role } from './constants.js';
+
 // ==================== 数据库实体类型 ====================
 
 export interface User {
@@ -159,6 +161,8 @@ export interface ChatMessageEvent {
   isError?: boolean;
   modelUsage?: { input: number; output: number };
   timestamp: Date;
+  sender_id?: string;
+  sender_name?: string;
 }
 
 /** Reference to an uploaded file attachment */
@@ -469,3 +473,12 @@ export interface SharedSessionViewersEvent {
   sessionId: string;
   viewersCount: number;
 }
+
+// ==================== 会话协作类型（Phase 2） ====================
+
+export interface InviteCreateEvent { session_id: string; role: 'collaborator' | 'viewer'; maxUses?: number; expiresAt?: string; }
+export interface InviteCreatedEvent { session_id: string; token: string; role: 'collaborator' | 'viewer'; link: string; }
+export interface ParticipantsListEvent { session_id: string; }
+export interface ParticipantInfo { userId: string; displayName: string; role: Role; online: boolean; }
+export interface ParticipantsEvent { session_id: string; participants: ParticipantInfo[]; viewerCount: number; }
+export interface ApprovalModeSetEvent { session_id: string; mode: ApprovalMode; }
