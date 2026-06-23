@@ -178,6 +178,8 @@ export interface ChatSendEvent {
   session_id: string;
   content: string;
   attachments?: AttachmentRef[];
+  sender_id?: string;
+  sender_name?: string;
 }
 
 export interface ChatPermissionRequestEvent {

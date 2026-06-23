@@ -28,6 +28,7 @@ import {
   ValidatePathRequest,
   JoinSharedSessionRequest,
   SharedSessionViewersEvent,
+  Role,
 } from 'cc-remote-shared';
 import { verifyToken, JwtPayload } from '../auth';
 import {
@@ -44,7 +45,7 @@ import {
   onlineParticipants,
 } from './store';
 import { isMachineOnline } from './agent.socket';
-import { validateInvite, resolveDisplayName } from '../session/policy';
+import { validateInvite, resolveDisplayName, canSend } from '../session/policy';
 import { decideJoin } from '../session/join';
 
 const prisma = new PrismaClient();
@@ -517,16 +518,17 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // Chat 模式：转发用户消息（Client -> Agent）
   socket.on(SocketEvents.CHAT_SEND, (data: ChatSendEvent) => {
-    if (socket.data.isViewer) {
-      socket.emit(SocketEvents.ERROR, { message: '访客无法发送消息' });
-      return;
-    }
+    const online = onlineParticipants.get(socket.id);
+    const role: Role = online?.role ?? 'viewer';
+    if (!canSend(role)) return;
     const sessionInfo = sessions.get(data.session_id);
-    if (!sessionInfo) {
-      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
-      return;
-    }
-    emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_SEND, data);
+    if (!sessionInfo) return;
+    const enriched = {
+      ...data,
+      sender_id: online?.userId,
+      sender_name: online?.displayName ?? resolveDisplayName({ username: socket.data.username ?? null, email: socket.data.email ?? '' }),
+    };
+    emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_SEND, enriched);
   });
 
   // Chat 模式：转发权限审批回答（Client -> Agent）
