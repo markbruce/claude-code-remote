@@ -339,6 +339,7 @@ export interface SessionInfo {
   startedAt: Date;
   clientsCount: number;
   mode: 'chat' | 'shell';
+  approvalMode: ApprovalMode;
 }
 
 // ==================== Agent 状态类型 ====================

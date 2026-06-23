@@ -10,6 +10,7 @@ import {
   SessionInfo,
   SessionOutputEvent,
   ChatMessageEvent,
+  Role,
 } from 'cc-remote-shared';
 import crypto from 'crypto';
 
@@ -21,6 +22,14 @@ export const onlineMachines = new Map<string, OnlineMachineInfo>();
 
 // 会话Map: sessionId -> SessionInfo
 export const sessions = new Map<string, SessionInfo>();
+
+// socketId → resolved identity/role, populated at connect
+export interface OnlineParticipant {
+  role: Role;
+  userId?: string;        // absent for anonymous viewers
+  displayName?: string;
+}
+export const onlineParticipants = new Map<string, OnlineParticipant>();
 
 // 会话缓冲区Map: sessionId -> SessionOutputEvent[]
 export const sessionBuffers = new Map<string, SessionOutputEvent[]>();
@@ -60,6 +69,7 @@ export function clearAllStores() {
   chatBuffers.clear();
   shareTokens.clear();
   sessionShareTokens.clear();
+  onlineParticipants.clear();
 }
 
 /**

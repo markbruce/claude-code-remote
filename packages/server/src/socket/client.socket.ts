@@ -41,8 +41,11 @@ import {
   revokeShareToken,
   getSessionByShareToken,
   sessionShareTokens,
+  onlineParticipants,
 } from './store';
 import { isMachineOnline } from './agent.socket';
+import { validateInvite, resolveDisplayName } from '../session/policy';
+import { decideJoin } from '../session/join';
 
 const prisma = new PrismaClient();
 
@@ -74,9 +77,14 @@ interface ClientSocket extends Socket {
   data: {
     userId?: string;
     email?: string;
+    username?: string | null;
     jwtPayload?: JwtPayload;
     isViewer?: boolean;
     shareToken?: string;
+    role?: 'owner' | 'collaborator' | 'viewer';
+    sessionId?: string;
+    displayName?: string;
+    viewerSessionId?: string;
   };
 }
 
@@ -614,62 +622,120 @@ export function handleClientConnection(socket: ClientSocket) {
     console.log(`[Client] Session sharing stopped: ${data.session_id}`);
   });
 
-  // 访客通过 shareToken 加入
-  socket.on(SocketEvents.JOIN_SHARED_SESSION, (data: JoinSharedSessionRequest) => {
-    const sessionId = getSessionByShareToken(data.shareToken);
-    if (!sessionId) {
-      socket.emit(SocketEvents.ERROR, { message: '无效或已过期的分享链接' });
-      return;
-    }
-
-    const sessionInfo = sessions.get(sessionId);
-    if (!sessionInfo) {
-      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
-      return;
-    }
-
-    const room = `session:${sessionId}`;
-    socket.join(room);
-    sessionInfo.clientsCount++;
-
-    // 标记 viewer 的 sessionId
-    (socket.data as any).viewerSessionId = sessionId;
-
-    // 回放 chatBuffer 给访客
-    const buffer = chatBuffers.get(sessionId);
-    if (buffer && buffer.length > 0) {
-      for (const msg of buffer) {
-        socket.emit(SocketEvents.CHAT_MESSAGE, msg);
+  // 访客/协作者通过 invite token 加入
+  socket.on(SocketEvents.JOIN_SHARED_SESSION, async (data: JoinSharedSessionRequest) => {
+    try {
+      const invite = await prisma.sessionInvite.findUnique({ where: { token: data.shareToken } });
+      if (!invite) {
+        socket.emit(SocketEvents.ERROR, { message: '邀请链接无效' });
+        return;
       }
-    }
 
-    // 广播观众数量给 room 内所有人
-    const io = getIoInstance();
-    let viewersCount = 0;
-    if (io) {
-      const socketsInRoom = io.sockets.adapter.rooms.get(room);
-      if (socketsInRoom) {
-        for (const sid of socketsInRoom) {
-          const s = io.sockets.sockets.get(sid);
-          if (s?.data?.isViewer) viewersCount++;
+      const status = validateInvite(
+        { role: invite.role, expiresAt: invite.expires_at, maxUses: invite.max_uses, usedCount: invite.used_count },
+        new Date(),
+      );
+      if (status !== 'ok') {
+        socket.emit(SocketEvents.ERROR, { message: status === 'expired' ? '邀请链接已过期' : '邀请名额已满' });
+        return;
+      }
+
+      const decision = decideJoin({ inviteRole: invite.role as 'viewer' | 'collaborator', hasJwt: !!socket.data.userId });
+      if (!decision) {
+        socket.emit(SocketEvents.ERROR, { message: '该协作邀请需要先登录' });
+        return;
+      }
+
+      // 单次邀请原子核销（collaborator 且 maxUses 有限）
+      if (decision.requiresParticipantRow && invite.max_uses !== null) {
+        const r = await prisma.sessionInvite.updateMany({
+          where: { id: invite.id, used_count: { lt: invite.max_uses } },
+          data: { used_count: { increment: 1 } },
+        });
+        if (r.count === 0) {
+          socket.emit(SocketEvents.ERROR, { message: '邀请名额已满' });
+          return;
         }
       }
+
+      const sessionId = invite.session_id;
+      const sessionInfo = sessions.get(sessionId);
+      if (!sessionInfo) {
+        socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+        return;
+      }
+
+      // 协作者 upsert SessionParticipant 行
+      let displayName: string | undefined;
+      if (decision.requiresParticipantRow) {
+        await prisma.sessionParticipant.upsert({
+          where: { session_id_user_id: { session_id: sessionId, user_id: socket.data.userId! } },
+          create: { session_id: sessionId, user_id: socket.data.userId!, role: 'collaborator', invited_by: invite.created_by },
+          update: { role: 'collaborator' },
+        });
+        const user = await prisma.user.findUnique({ where: { id: socket.data.userId! } });
+        displayName = user ? resolveDisplayName({ username: user.username, email: user.email }) : undefined;
+      }
+
+      // 设置 socket.data
+      socket.data.role = decision.role;
+      socket.data.sessionId = sessionId;
+      if (decision.requiresParticipantRow) {
+        socket.data.displayName = displayName;
+      } else {
+        // viewer 维持 Phase 1 isViewer 标记，便于既有访客流判断
+        socket.data.isViewer = true;
+        socket.data.viewerSessionId = sessionId;
+      }
+      onlineParticipants.set(socket.id, {
+        role: decision.role,
+        userId: decision.requiresParticipantRow ? socket.data.userId : undefined,
+        displayName,
+      });
+
+      const room = `session:${sessionId}`;
+      socket.join(room);
+      sessionInfo.clientsCount++;
+
+      // 回放 chatBuffer 给访客/协作者
+      const buffer = chatBuffers.get(sessionId);
+      if (buffer && buffer.length > 0) {
+        for (const msg of buffer) {
+          socket.emit(SocketEvents.CHAT_MESSAGE, msg);
+        }
+      }
+
+      // 广播观众数量给 room 内所有人
+      const io = getIoInstance();
+      let viewersCount = 0;
+      if (io) {
+        const socketsInRoom = io.sockets.adapter.rooms.get(room);
+        if (socketsInRoom) {
+          for (const sid of socketsInRoom) {
+            const s = io.sockets.sockets.get(sid);
+            if (s?.data?.isViewer) viewersCount++;
+          }
+        }
+      }
+      io?.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
+        sessionId,
+        viewersCount,
+      } as SharedSessionViewersEvent);
+
+      socket.emit(SocketEvents.SESSION_STARTED, {
+        sessionId,
+        projectPath: sessionInfo.projectPath ?? '',
+        machineId: sessionInfo.machineId,
+        mode: sessionInfo.mode,
+        isHistory: true,
+        fromExistingSession: true,
+      });
+
+      console.log(`[Client] Joined shared session: ${sessionId} (role: ${decision.role}, viewers: ${viewersCount})`);
+    } catch (error) {
+      console.error('[Client] Join shared session error:', error);
+      socket.emit(SocketEvents.ERROR, { message: '加入共享会话失败' });
     }
-    io?.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
-      sessionId,
-      viewersCount,
-    } as SharedSessionViewersEvent);
-
-    socket.emit(SocketEvents.SESSION_STARTED, {
-      sessionId,
-      projectPath: sessionInfo.projectPath ?? '',
-      machineId: sessionInfo.machineId,
-      mode: sessionInfo.mode,
-      isHistory: true,
-      fromExistingSession: true,
-    });
-
-    console.log(`[Client] Viewer joined shared session: ${sessionId} (viewers: ${viewersCount})`);
   });
 
   // ==================== 会话历史 ====================
