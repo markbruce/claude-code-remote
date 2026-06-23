@@ -333,6 +333,13 @@ export interface OnlineMachineInfo {
 
 // ==================== 会话管理类型 ====================
 
+export interface PendingPermissions {
+  tryResolve(id: string): boolean;
+  isResolved(id: string): boolean;
+  clear(id: string): void;
+  size(): number;
+}
+
 export interface SessionInfo {
   sessionId: string;
   machineId: string;
@@ -342,6 +349,11 @@ export interface SessionInfo {
   clientsCount: number;
   mode: 'chat' | 'shell';
   approvalMode: ApprovalMode;
+  /**
+   * Server-only runtime helper for first-approval-wins on permission requests.
+   * Not serialized; populated only in the server's in-memory session map.
+   */
+  pendingPermissions?: PendingPermissions;
 }
 
 // ==================== Agent 状态类型 ====================

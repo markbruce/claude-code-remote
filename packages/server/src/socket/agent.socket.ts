@@ -22,10 +22,14 @@ import {
   WriteFileRequest,
   FileContentResponse,
   AgentConnectionState,
+  ApprovalMode,
+  Role,
 } from 'cc-remote-shared';
 import { verifyMachineToken } from '../auth';
 import { onlineMachines, sessions, sessionBuffers, chatBuffers, getIoInstance, gitResponseEmitter, onlineParticipants } from './store';
 import { getSocketIdByRequestId, removePendingRequest } from './client.socket';
+import { canApprove } from '../session/policy';
+import { createPendingPermissions } from '../session/pendingPermissions';
 
 const prisma = new PrismaClient();
 
@@ -233,6 +237,7 @@ export function handleAgentConnection(socket: AgentSocket) {
       clientsCount: 0,
       mode,
       approvalMode: 'owner',
+      pendingPermissions: createPendingPermissions(),
     });
 
     // 初始化缓冲区（历史会话 join 时也需有 buffer 占位，否则后续 OUTPUT 会丢）
@@ -351,17 +356,21 @@ export function handleAgentConnection(socket: AgentSocket) {
     }
   });
 
-  // Chat 模式：转发权限请求（Agent -> Client），排除只读访客（权限细节不向访客泄露）
+  // Chat 模式：转发权限请求（Agent -> Client），按 approvalMode 仅发给有权审批的角色
   socket.on(SocketEvents.CHAT_PERMISSION_REQUEST, (data: ChatPermissionRequestEvent) => {
     const io = getIoInstance();
     if (!io) return;
     const clientNs = io.of(SocketNamespaces.CLIENT);
     const room = clientNs.adapter.rooms.get(`session:${data.session_id}`);
     if (!room) return;
+    const sessionInfo = sessions.get(data.session_id);
+    const mode: ApprovalMode = sessionInfo?.approvalMode ?? 'owner';
     for (const sid of room) {
       const s = clientNs.sockets.get(sid);
-      if (s && !(s.data as { isViewer?: boolean })?.isViewer) {
-        s.emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
+      const online = onlineParticipants.get(sid);
+      const role: Role = online?.role ?? 'viewer';
+      if (canApprove(role, mode)) {
+        s?.emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
       }
     }
   });

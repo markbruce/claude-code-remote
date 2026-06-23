@@ -29,6 +29,7 @@ import {
   JoinSharedSessionRequest,
   SharedSessionViewersEvent,
   Role,
+  ApprovalMode,
 } from 'cc-remote-shared';
 import { verifyToken, JwtPayload } from '../auth';
 import {
@@ -45,7 +46,7 @@ import {
   onlineParticipants,
 } from './store';
 import { isMachineOnline } from './agent.socket';
-import { validateInvite, resolveDisplayName, canSend } from '../session/policy';
+import { validateInvite, resolveDisplayName, canSend, canApprove } from '../session/policy';
 import { decideJoin } from '../session/join';
 
 const prisma = new PrismaClient();
@@ -531,18 +532,26 @@ export function handleClientConnection(socket: ClientSocket) {
     emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_SEND, enriched);
   });
 
-  // Chat 模式：转发权限审批回答（Client -> Agent）
+  // Chat 模式：转发权限审批回答（Client -> Agent），first-approval-wins + 通知其他接收者清空 banner
   socket.on(SocketEvents.CHAT_PERMISSION_ANSWER, (data: ChatPermissionAnswerEvent) => {
-    if (socket.data.isViewer) {
-      socket.emit(SocketEvents.ERROR, { message: '访客无法审批权限' });
-      return;
-    }
+    const online = onlineParticipants.get(socket.id);
+    const role: Role = online?.role ?? 'viewer';
     const sessionInfo = sessions.get(data.session_id);
-    if (!sessionInfo) {
-      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
-      return;
-    }
+    const mode: ApprovalMode = sessionInfo?.approvalMode ?? 'owner';
+    if (!canApprove(role, mode)) return;
+    if (!sessionInfo?.pendingPermissions?.tryResolve(data.requestId)) return; // 别人已先审批
+
+    // 转发胜出的回答给 Agent
     emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_PERMISSION_ANSWER, data);
+
+    // 通知其他收到该请求的客户端清空权限 banner
+    const io = getIoInstance();
+    if (io) {
+      io.of(SocketNamespaces.CLIENT)
+        .to(`session:${data.session_id}`)
+        .except(socket.id)
+        .emit(SocketEvents.CHAT_PERMISSION_RESOLVED, { request_id: data.requestId, approved: data.approved });
+    }
   });
 
   // Chat 模式：转发中断请求（Client -> Agent）
