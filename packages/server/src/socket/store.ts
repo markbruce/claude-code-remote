@@ -12,7 +12,6 @@ import {
   ChatMessageEvent,
   Role,
 } from 'cc-remote-shared';
-import crypto from 'crypto';
 
 // Socket.io Server 实例
 let _io: Server | null = null;
@@ -36,11 +35,6 @@ export const sessionBuffers = new Map<string, SessionOutputEvent[]>();
 
 // Chat 消息缓冲区Map: sessionId -> ChatMessageEvent[]
 export const chatBuffers = new Map<string, ChatMessageEvent[]>();
-
-// 会话分享: shareToken -> sessionId
-export const shareTokens = new Map<string, string>();
-// 反向映射: sessionId -> shareToken
-export const sessionShareTokens = new Map<string, string>();
 
 // Git 响应事件发射器
 export const gitResponseEmitter = new EventEmitter();
@@ -67,8 +61,6 @@ export function clearAllStores() {
   sessions.clear();
   sessionBuffers.clear();
   chatBuffers.clear();
-  shareTokens.clear();
-  sessionShareTokens.clear();
   onlineParticipants.clear();
 }
 
@@ -86,38 +78,4 @@ export function getMachineSessions(machineId: string): SessionInfo[] {
  */
 export function getSessionBuffer(sessionId: string): SessionOutputEvent[] {
   return sessionBuffers.get(sessionId) || [];
-}
-
-/**
- * 生成分享 token 并双向映射
- */
-export function generateShareToken(sessionId: string): string {
-  // 若已有 token，先清除
-  const existing = sessionShareTokens.get(sessionId);
-  if (existing) {
-    shareTokens.delete(existing);
-  }
-
-  const token = crypto.randomUUID();
-  shareTokens.set(token, sessionId);
-  sessionShareTokens.set(sessionId, token);
-  return token;
-}
-
-/**
- * 撤销分享 token
- */
-export function revokeShareToken(sessionId: string): void {
-  const token = sessionShareTokens.get(sessionId);
-  if (token) {
-    shareTokens.delete(token);
-  }
-  sessionShareTokens.delete(sessionId);
-}
-
-/**
- * 通过 shareToken 查找 sessionId
- */
-export function getSessionByShareToken(shareToken: string): string | undefined {
-  return shareTokens.get(shareToken);
 }

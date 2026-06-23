@@ -5,6 +5,7 @@
 
 import { Socket } from 'socket.io';
 import { PrismaClient } from '@prisma/client';
+import crypto from 'crypto';
 import {
   SocketEvents,
   SocketNamespaces,
@@ -30,6 +31,10 @@ import {
   SharedSessionViewersEvent,
   Role,
   ApprovalMode,
+  InviteCreateEvent,
+  ParticipantsListEvent,
+  ParticipantInfo,
+  ApprovalModeSetEvent,
 } from 'cc-remote-shared';
 import { verifyToken, JwtPayload } from '../auth';
 import {
@@ -39,10 +44,6 @@ import {
   chatBuffers,
   getMachineSessions,
   getIoInstance,
-  generateShareToken,
-  revokeShareToken,
-  getSessionByShareToken,
-  sessionShareTokens,
   onlineParticipants,
 } from './store';
 import { isMachineOnline } from './agent.socket';
@@ -99,10 +100,10 @@ export async function clientAuthMiddleware(socket: Socket, next: (err?: Error) =
     const auth = socket.handshake.auth as ClientAuthData;
     const { token, shareToken } = auth;
 
-    // 访客模式：通过 shareToken 加入
+    // 访客模式：通过 shareToken 加入（Phase 2：校验 DB invite）
     if (!token && shareToken) {
-      const sessionId = getSessionByShareToken(shareToken);
-      if (!sessionId) {
+      const invite = await prisma.sessionInvite.findUnique({ where: { token: shareToken } });
+      if (!invite) {
         return next(new Error('无效的分享链接'));
       }
       socket.data = { isViewer: true, shareToken };
@@ -580,57 +581,125 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // ==================== 会话分享事件 ====================
 
-  // Owner 发起分享
-  socket.on(SocketEvents.SHARE_SESSION, (data: { session_id: string }) => {
-    if (socket.data.isViewer) {
-      socket.emit(SocketEvents.ERROR, { message: '访客无法发起分享' });
-      return;
-    }
-    const sessionInfo = sessions.get(data.session_id);
-    if (!sessionInfo) {
-      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
-      return;
-    }
-    const token = generateShareToken(data.session_id);
+  // Owner 发起分享（Phase 2：创建 DB viewer 邀请，返回 token）
+  socket.on(SocketEvents.SHARE_SESSION, async (data: { session_id: string }) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    const invite = await prisma.sessionInvite.create({
+      data: {
+        session_id: data.session_id,
+        token: crypto.randomUUID(),
+        role: 'viewer',
+        created_by: socket.data.userId!,
+      },
+    });
     socket.emit(SocketEvents.SHARE_SESSION, {
       session_id: data.session_id,
-      shareToken: token,
+      shareToken: invite.token,
     });
-    console.log(`[Client] Session shared: ${data.session_id}, token: ${token}`);
+    console.log(`[Client] Share enabled (DB invite) for session ${data.session_id}`);
   });
 
-  // Owner 停止分享
-  socket.on(SocketEvents.STOP_SHARE, (data: { session_id: string }) => {
-    if (socket.data.isViewer) {
-      socket.emit(SocketEvents.ERROR, { message: '访客无法停止分享' });
-      return;
-    }
-    const sessionInfo = sessions.get(data.session_id);
-    if (!sessionInfo) {
-      socket.emit(SocketEvents.ERROR, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
-      return;
-    }
-
-    // 踢出所有 viewer socket
-    const room = `session:${data.session_id}`;
+  // Owner 停止分享（删除 viewer 邀请并踢出在线 viewer）
+  socket.on(SocketEvents.STOP_SHARE, async (data: { session_id: string }) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    await prisma.sessionInvite.deleteMany({ where: { session_id: data.session_id, role: 'viewer' } }).catch(() => {});
     const io = getIoInstance();
     if (io) {
-      const socketsInRoom = io.sockets.adapter.rooms.get(room);
-      if (socketsInRoom) {
-        for (const sid of socketsInRoom) {
-          const s = io.sockets.sockets.get(sid);
-          if (s?.data?.isViewer) {
+      for (const [sid, o] of onlineParticipants) {
+        if (o.role === 'viewer') {
+          const s = io.of(SocketNamespaces.CLIENT).sockets.get(sid);
+          if (s) {
+            onlineParticipants.delete(sid);
             s.emit(SocketEvents.STOP_SHARE, { session_id: data.session_id });
             s.disconnect(true);
           }
         }
       }
     }
-
-    revokeShareToken(data.session_id);
     socket.emit(SocketEvents.STOP_SHARE, { session_id: data.session_id });
     socket.emit(SocketEvents.SHARED_SESSION_VIEWERS, { sessionId: data.session_id, viewersCount: 0 });
     console.log(`[Client] Session sharing stopped: ${data.session_id}`);
+  });
+
+  // ==================== Phase 2：邀请 / 参与者 / 审批模式管理（owner-only） ====================
+
+  // 创建协作邀请
+  socket.on(SocketEvents.INVITE_CREATE, async (data: InviteCreateEvent) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    const token = crypto.randomUUID();
+    const invite = await prisma.sessionInvite.create({
+      data: {
+        session_id: data.session_id,
+        token,
+        role: data.role,
+        created_by: socket.data.userId!,
+        expires_at: data.expiresAt ? new Date(data.expiresAt) : null,
+        max_uses: data.maxUses ?? null,
+      },
+    });
+    socket.emit(SocketEvents.INVITE_CREATED, {
+      session_id: data.session_id,
+      token: invite.token,
+      role: invite.role,
+      link: `${process.env.PUBLIC_URL ?? ''}/shared/${invite.token}`,
+    });
+  });
+
+  // 撤销邀请
+  socket.on(SocketEvents.INVITE_REVOKE, async (data: { session_id: string; token: string }) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    await prisma.sessionInvite.delete({ where: { token: data.token } }).catch(() => {});
+  });
+
+  // 列出参与者
+  socket.on(SocketEvents.PARTICIPANTS_LIST, async (data: ParticipantsListEvent) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    const rows = await prisma.sessionParticipant.findMany({
+      where: { session_id: data.session_id },
+      include: { user: true },
+    });
+    const onlineValues = [...onlineParticipants.values()];
+    const participants: ParticipantInfo[] = rows.map((r) => ({
+      userId: r.user_id,
+      displayName: resolveDisplayName({ username: r.user.username, email: r.user.email }),
+      role: r.role as Role,
+      online: onlineValues.some((o) => o.userId === r.user_id),
+    }));
+    const viewerCount = onlineValues.filter((o) => o.role === 'viewer').length;
+    socket.emit(SocketEvents.PARTICIPANTS, { session_id: data.session_id, participants, viewerCount });
+  });
+
+  // 移除参与者（删除记录 + 踢出在线 socket + 广播）
+  socket.on(SocketEvents.PARTICIPANT_REMOVED, async (data: { session_id: string; userId: string }) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    await prisma.sessionParticipant.deleteMany({ where: { session_id: data.session_id, user_id: data.userId } });
+    const io = getIoInstance();
+    if (io) {
+      for (const [sid, o] of onlineParticipants) {
+        if (o.userId === data.userId) {
+          const s = io.of(SocketNamespaces.CLIENT).sockets.get(sid);
+          if (s) {
+            onlineParticipants.delete(sid);
+            s.disconnect(true);
+          }
+        }
+      }
+      io.of(SocketNamespaces.CLIENT)
+        .to(`session:${data.session_id}`)
+        .emit(SocketEvents.PARTICIPANT_REMOVED, { userId: data.userId });
+    }
+  });
+
+  // 设置审批模式
+  socket.on(SocketEvents.APPROVAL_MODE_SET, async (data: ApprovalModeSetEvent) => {
+    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    await prisma.sessionLog.update({ where: { id: data.session_id }, data: { approval_mode: data.mode } }).catch(() => {});
+    const sessionInfo = sessions.get(data.session_id);
+    if (sessionInfo) sessionInfo.approvalMode = data.mode;
+    getIoInstance()
+      ?.of(SocketNamespaces.CLIENT)
+      .to(`session:${data.session_id}`)
+      .emit(SocketEvents.APPROVAL_MODE_CHANGED, data);
   });
 
   // 访客/协作者通过 invite token 加入
@@ -940,25 +1009,22 @@ export function handleClientConnection(socket: ClientSocket) {
           sessionInfo.clientsCount--;
         }
 
-        // 如果是 viewer 断开，广播更新后的观众数
-        if (socket.data.isViewer && sessionShareTokens.has(sessionId)) {
+        // 如果是 viewer 断开，广播更新后的观众数（基于 onlineParticipants 覆盖层）
+        const disconnectingEntry = onlineParticipants.get(socket.id);
+        if (disconnectingEntry?.role === 'viewer') {
+          onlineParticipants.delete(socket.id);
           const io = getIoInstance();
           if (io) {
-            let viewersCount = 0;
-            const socketsInRoom = io.sockets.adapter.rooms.get(room);
-            if (socketsInRoom) {
-              for (const sid of socketsInRoom) {
-                if (sid !== socket.id) {
-                  const s = io.sockets.sockets.get(sid);
-                  if (s?.data?.isViewer) viewersCount++;
-                }
-              }
-            }
+            const viewersCount = [...onlineParticipants.values()].filter(
+              (o) => o.role === 'viewer',
+            ).length;
             io.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
               sessionId,
               viewersCount,
             } as SharedSessionViewersEvent);
           }
+        } else if (disconnectingEntry) {
+          onlineParticipants.delete(socket.id);
         }
       }
     });
