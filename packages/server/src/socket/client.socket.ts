@@ -829,6 +829,7 @@ export function handleClientConnection(socket: ClientSocket) {
         mode: sessionInfo.mode,
         isHistory: true,
         fromExistingSession: true,
+        role: decision.role,
       });
 
       console.log(`[Client] Joined shared session: ${sessionId} (role: ${decision.role}, viewers: ${viewersCount})`);
