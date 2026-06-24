@@ -60,6 +60,12 @@ export const SocketEvents = {
   MACHINES_LIST: 'machines:list',
   ERROR: 'error',
 
+  // 会话分享事件
+  SHARE_SESSION: 'share-session',
+  STOP_SHARE: 'stop-share',
+  JOIN_SHARED_SESSION: 'join-shared-session',
+  SHARED_SESSION_VIEWERS: 'shared:viewers',
+
   // Agent 状态事件
   AGENT_STATUS_CHANGED: 'agent:status_changed',
 
@@ -78,7 +84,24 @@ export const SocketEvents = {
   // 路径验证事件
   VALIDATE_PATH: 'validate-path',
   PATH_VALIDATED: 'path:validated',
+
+  // 会话协作事件（Phase 2）
+  INVITE_CREATE: 'invite:create',
+  INVITE_CREATED: 'invite:created',
+  INVITE_REVOKE: 'invite:revoke',
+  PARTICIPANTS_LIST: 'participants:list',
+  PARTICIPANTS: 'participants',
+  PARTICIPANT_REMOVED: 'participant:removed',
+  APPROVAL_MODE_SET: 'approval-mode:set',
+  APPROVAL_MODE_CHANGED: 'approval-mode:changed',
+  CHAT_PERMISSION_RESOLVED: 'chat:permission-resolved',
 } as const;
+
+// 会话协作模式（Phase 2）
+export const APPROVAL_MODE_OWNER = 'owner';
+export const APPROVAL_MODE_ANY = 'any';
+export type ApprovalMode = typeof APPROVAL_MODE_OWNER | typeof APPROVAL_MODE_ANY;
+export type Role = 'owner' | 'collaborator' | 'viewer';
 
 // 心跳配置
 export const HEARTBEAT_INTERVAL = 25000; // 25秒

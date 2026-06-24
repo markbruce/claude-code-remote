@@ -1,9 +1,10 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChatMessagesPane } from './ChatMessagesPane';
 import { ChatComposer } from './ChatComposer';
 import { PermissionBanner } from './PermissionBanner';
 import { TokenUsagePanel } from './TokenUsagePanel';
+import { ParticipantsPanel } from './ParticipantsPanel';
 import { useChatStore } from '../../stores/chatStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import type { ChatMessage } from '../../stores/chatStore';
@@ -36,6 +37,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
     loadMoreHistoryMessages,
   } = useChatStore();
   const isResumed = useSessionStore((s) => s.isResumedSession);
+  const isSharing = useSessionStore((s) => s.isSharing);
+  const shareLink = useSessionStore((s) => s.shareLink);
+  const viewersCount = useSessionStore((s) => s.viewersCount);
+  const startSharing = useSessionStore((s) => s.startSharing);
+  const stopSharing = useSessionStore((s) => s.stopSharing);
+  const [showParticipants, setShowParticipants] = useState(false);
+
+  const handleShare = useCallback(() => {
+    if (isSharing && shareLink) {
+      navigator.clipboard.writeText(shareLink);
+    } else {
+      startSharing(sessionId);
+    }
+  }, [isSharing, shareLink, startSharing, sessionId]);
+
+  const handleStopShare = useCallback(() => {
+    stopSharing(sessionId);
+  }, [stopSharing, sessionId]);
 
   const addSystemMessage = useCallback((content: string) => {
     const msg: ChatMessage = { id: genSysId(), type: 'assistant', content, timestamp: new Date() };
@@ -94,17 +113,55 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
   }, [loadMoreHistoryMessages]);
 
   return (
-    <div className="h-full flex flex-col bg-white dark:bg-gray-900">
+    <div className="h-full flex bg-white dark:bg-gray-900">
+      <div className="h-full flex flex-col flex-1 min-w-0">
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/50">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Chat</span>
           {isResumed && <span className="text-xs text-blue-500 dark:text-blue-400">({t('chat.resumedShort')})</span>}
         </div>
-        <TokenUsagePanel
-          used={tokenUsage?.total || 0}
-          total={200000}
-          isLoading={isGenerating}
-        />
+        <div className="flex items-center gap-2">
+          {isSharing ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-green-600 dark:text-green-400">
+                👁 {t('share.viewers', { count: viewersCount })}
+              </span>
+              <button
+                onClick={() => setShowParticipants((v) => !v)}
+                className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title={t('collab.participants')}
+              >
+                {t('collab.participants')}
+              </button>
+              <button
+                onClick={handleShare}
+                className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                title={t('share.copyLink')}
+              >
+                {t('share.copyLink')}
+              </button>
+              <button
+                onClick={handleStopShare}
+                className="text-xs px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+              >
+                {t('share.stop')}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleShare}
+              className="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title={t('share.title')}
+            >
+              {t('share.share')}
+            </button>
+          )}
+          <TokenUsagePanel
+            used={tokenUsage?.total || 0}
+            total={200000}
+            isLoading={isGenerating}
+          />
+        </div>
       </div>
       <ChatMessagesPane
         messages={messages}
@@ -123,6 +180,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, machine
         projectPath={projectPath}
         sessionId={sessionId}
       />
+      </div>
+      {showParticipants && <ParticipantsPanel sessionId={sessionId} onClose={() => setShowParticipants(false)} />}
     </div>
   );
 };

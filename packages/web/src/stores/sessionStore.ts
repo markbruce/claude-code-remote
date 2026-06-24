@@ -13,6 +13,8 @@ import type {
   SlashCommandItem,
   FileContentResponse,
   ValidatePathResponse,
+  ParticipantInfo,
+  ApprovalMode,
 } from 'cc-remote-shared';
 import { SocketEvents, AgentConnectionState } from 'cc-remote-shared';
 import { socketManager } from '../lib/socket';
@@ -60,6 +62,16 @@ interface SessionState {
   customCommands: SlashCommandItem[];
   pendingSessionRequestId: string | null; // 用于验证 SESSION_STARTED 是否是自己发起的
 
+  // 会话分享状态
+  isSharing: boolean;
+  shareLink: string | null;
+  viewersCount: number;
+
+  // 会话协作状态（Phase 2）
+  participants: ParticipantInfo[];
+  viewerCount: number;
+  approvalMode: ApprovalMode;
+
   // 多标签页编辑状态
   editorTabs: EditorTab[];
   activeTabPath: string | null;
@@ -91,6 +103,17 @@ interface SessionState {
   fetchCommands: (machineId: string, projectPath: string) => void;
   clearError: () => void;
   reset: () => void;
+
+  // 会话分享操作
+  startSharing: (sessionId: string) => void;
+  stopSharing: (sessionId: string) => void;
+
+  // 会话协作操作（Phase 2）
+  setParticipants: (participants: ParticipantInfo[]) => void;
+  setViewerCount: (count: number) => void;
+  setApprovalMode: (mode: ApprovalMode) => void;
+  removeParticipant: (userId: string) => void;
+  resolvePermission: (requestId: string) => void;
 
   // 文件操作（多标签）
   openFilePreview: (machineId: string, projectPath: string, filePath: string) => void;
@@ -138,6 +161,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadingDirs: new Set(),
   customCommands: [],
   pendingSessionRequestId: null,
+
+  // 会话分享
+  isSharing: false,
+  shareLink: null,
+  viewersCount: 0,
+
+  // 会话协作（Phase 2）
+  participants: [],
+  viewerCount: 0,
+  approvalMode: 'owner',
 
   // 多标签页编辑初始状态
   editorTabs: [],
@@ -283,6 +316,47 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   // 清除错误
   clearError: () => {
     set({ error: null });
+  },
+
+  // 会话分享：发起分享
+  startSharing: (sessionId: string) => {
+    socketManager.shareSession(sessionId);
+  },
+
+  // 会话分享：停止分享
+  stopSharing: (sessionId: string) => {
+    socketManager.stopShare(sessionId);
+    set({ isSharing: false, shareLink: null, viewersCount: 0 });
+  },
+
+  // 会话协作：设置参与者列表
+  setParticipants: (participants: ParticipantInfo[]) => {
+    set({ participants });
+  },
+
+  // 会话协作：设置访客数量
+  setViewerCount: (count: number) => {
+    set({ viewerCount: count });
+  },
+
+  // 会话协作：设置审批模式
+  setApprovalMode: (mode: ApprovalMode) => {
+    set({ approvalMode: mode });
+  },
+
+  // 会话协作：移除指定参与者
+  removeParticipant: (userId: string) => {
+    set((state) => ({
+      participants: state.participants.filter((p) => p.userId !== userId),
+    }));
+  },
+
+  // 会话协作：标记权限请求已解决（first-approval-wins 后其他端收到 RESOLVED 时清理本地 banner）
+  resolvePermission: (requestId: string) => {
+    // Chat 权限请求存于 chatStore；这里委托清理
+    useChatStore.setState((s) => ({
+      permissions: s.permissions.filter((p) => p.requestId !== requestId),
+    }));
   },
 
   // 打开文件（预览模式）- 单击时调用
@@ -557,6 +631,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       isValidatingPath: false,
       pathValidationError: null,
       validatedPath: null,
+      participants: [],
+      viewerCount: 0,
+      approvalMode: 'owner',
     });
   },
 }));
@@ -596,6 +673,7 @@ export const subscribeToSessionEvents = (): (() => void) => {
         startedAt: new Date(),
         clientsCount: 1,
         mode: typedData.mode ?? 'shell',
+        approvalMode: useSessionStore.getState().approvalMode,
       };
       store.setCurrentSession(session);
       useSessionStore.setState({ pendingSessionRequestId: null, isLoading: false });
@@ -827,6 +905,75 @@ export const subscribeToSessionEvents = (): (() => void) => {
       const result = data as ValidatePathResponse;
       const store = useSessionStore.getState();
       store.setPathValidationResult(result);
+    })
+  );
+
+  // 会话分享：收到 shareToken
+  unsubscribers.push(
+    socketManager.on(SocketEvents.SHARE_SESSION, (data: unknown) => {
+      const typedData = data as { session_id: string; shareToken: string };
+      const baseUrl = window.location.origin;
+      const shareLink = `${baseUrl}/shared/${typedData.shareToken}`;
+      useSessionStore.setState({
+        isSharing: true,
+        shareLink,
+        viewersCount: 0,
+      });
+    })
+  );
+
+  // 会话分享：停止分享
+  unsubscribers.push(
+    socketManager.on(SocketEvents.STOP_SHARE, (_data: unknown) => {
+      useSessionStore.setState({
+        isSharing: false,
+        shareLink: null,
+        viewersCount: 0,
+      });
+    })
+  );
+
+  // 会话分享：观众数量更新
+  unsubscribers.push(
+    socketManager.on(SocketEvents.SHARED_SESSION_VIEWERS, (data: unknown) => {
+      const typedData = data as { sessionId: string; viewersCount: number };
+      useSessionStore.setState({ viewersCount: typedData.viewersCount });
+    })
+  );
+
+  // 会话协作（Phase 2）：参与者列表
+  unsubscribers.push(
+    socketManager.on(SocketEvents.PARTICIPANTS, (data: unknown) => {
+      const typedData = data as { session_id: string; participants: ParticipantInfo[]; viewerCount: number };
+      const store = useSessionStore.getState();
+      store.setParticipants(typedData.participants || []);
+      if (typeof typedData.viewerCount === 'number') {
+        store.setViewerCount(typedData.viewerCount);
+      }
+    })
+  );
+
+  // 会话协作：参与者被移除
+  unsubscribers.push(
+    socketManager.on(SocketEvents.PARTICIPANT_REMOVED, (data: unknown) => {
+      const typedData = data as { session_id: string; userId: string };
+      useSessionStore.getState().removeParticipant(typedData.userId);
+    })
+  );
+
+  // 会话协作：审批模式变更
+  unsubscribers.push(
+    socketManager.on(SocketEvents.APPROVAL_MODE_CHANGED, (data: unknown) => {
+      const typedData = data as { session_id: string; mode: ApprovalMode };
+      useSessionStore.getState().setApprovalMode(typedData.mode);
+    })
+  );
+
+  // 会话协作：权限请求已被其他参与者解决（first-approval-wins）
+  unsubscribers.push(
+    socketManager.on(SocketEvents.CHAT_PERMISSION_RESOLVED, (data: unknown) => {
+      const typedData = data as { session_id: string; requestId: string; approved: boolean };
+      useSessionStore.getState().resolvePermission(typedData.requestId);
     })
   );
 

@@ -2,6 +2,8 @@
  * Claude Code Remote - 共享类型定义
  */
 
+import type { ApprovalMode, Role } from './constants.js';
+
 // ==================== 数据库实体类型 ====================
 
 export interface User {
@@ -150,7 +152,7 @@ export interface SessionResizeEvent {
 
 export interface ChatMessageEvent {
   session_id: string;
-  type: 'text' | 'text_delta' | 'tool_use' | 'tool_result' | 'error' | 'complete';
+  type: 'text' | 'text_delta' | 'tool_use' | 'tool_result' | 'error' | 'complete' | 'user';
   content?: string;
   toolName?: string;
   toolInput?: string;
@@ -159,6 +161,8 @@ export interface ChatMessageEvent {
   isError?: boolean;
   modelUsage?: { input: number; output: number };
   timestamp: Date;
+  sender_id?: string;
+  sender_name?: string;
 }
 
 /** Reference to an uploaded file attachment */
@@ -174,6 +178,8 @@ export interface ChatSendEvent {
   session_id: string;
   content: string;
   attachments?: AttachmentRef[];
+  sender_id?: string;
+  sender_name?: string;
 }
 
 export interface ChatPermissionRequestEvent {
@@ -327,6 +333,13 @@ export interface OnlineMachineInfo {
 
 // ==================== 会话管理类型 ====================
 
+export interface PendingPermissions {
+  tryResolve(id: string): boolean;
+  isResolved(id: string): boolean;
+  clear(id: string): void;
+  size(): number;
+}
+
 export interface SessionInfo {
   sessionId: string;
   machineId: string;
@@ -335,6 +348,12 @@ export interface SessionInfo {
   startedAt: Date;
   clientsCount: number;
   mode: 'chat' | 'shell';
+  approvalMode: ApprovalMode;
+  /**
+   * Server-only runtime helper for first-approval-wins on permission requests.
+   * Not serialized; populated only in the server's in-memory session map.
+   */
+  pendingPermissions?: PendingPermissions;
 }
 
 // ==================== Agent 状态类型 ====================
@@ -446,3 +465,35 @@ export interface ValidatePathResponse {
   path?: string;
   error?: string;
 }
+
+// ==================== 会话分享类型 ====================
+
+/** Owner 发起分享 */
+export interface ShareSessionEvent {
+  session_id: string;
+}
+
+/** Owner 停止分享 */
+export interface StopShareEvent {
+  session_id: string;
+}
+
+/** 访客通过 shareToken 加入 */
+export interface JoinSharedSessionRequest {
+  shareToken: string;
+}
+
+/** 广播观众数量 */
+export interface SharedSessionViewersEvent {
+  sessionId: string;
+  viewersCount: number;
+}
+
+// ==================== 会话协作类型（Phase 2） ====================
+
+export interface InviteCreateEvent { session_id: string; role: 'collaborator' | 'viewer'; maxUses?: number; expiresAt?: string; }
+export interface InviteCreatedEvent { session_id: string; token: string; role: 'collaborator' | 'viewer'; link: string; }
+export interface ParticipantsListEvent { session_id: string; }
+export interface ParticipantInfo { userId: string; displayName: string; role: Role; online: boolean; }
+export interface ParticipantsEvent { session_id: string; participants: ParticipantInfo[]; viewerCount: number; }
+export interface ApprovalModeSetEvent { session_id: string; mode: ApprovalMode; }

@@ -22,10 +22,14 @@ import {
   WriteFileRequest,
   FileContentResponse,
   AgentConnectionState,
+  ApprovalMode,
+  Role,
 } from 'cc-remote-shared';
 import { verifyMachineToken } from '../auth';
-import { onlineMachines, sessions, sessionBuffers, chatBuffers, getIoInstance, gitResponseEmitter } from './store';
+import { onlineMachines, sessions, sessionBuffers, chatBuffers, getIoInstance, gitResponseEmitter, onlineParticipants } from './store';
 import { getSocketIdByRequestId, removePendingRequest } from './client.socket';
+import { canApprove } from '../session/policy';
+import { createPendingPermissions } from '../session/pendingPermissions';
 
 const prisma = new PrismaClient();
 
@@ -202,6 +206,13 @@ export function handleAgentConnection(socket: AgentSocket) {
           started_at: new Date()
         }
       });
+
+      // 机器所有者即会话 owner，upsert 一条 owner 参与者行
+      await prisma.sessionParticipant.upsert({
+        where: { session_id_user_id: { session_id: session_id, user_id: userId } },
+        create: { session_id: session_id, user_id: userId, role: 'owner', invited_by: null },
+        update: { role: 'owner' },
+      }).catch(console.error);
     }
 
     // 查找对应的项目
@@ -225,6 +236,8 @@ export function handleAgentConnection(socket: AgentSocket) {
       startedAt: new Date(),
       clientsCount: 0,
       mode,
+      approvalMode: 'owner',
+      pendingPermissions: createPendingPermissions(),
     });
 
     // 初始化缓冲区（历史会话 join 时也需有 buffer 占位，否则后续 OUTPUT 会丢）
@@ -245,6 +258,16 @@ export function handleAgentConnection(socket: AgentSocket) {
         const stored = sessions.get(session_id);
         if (stored) stored.clientsCount++;
         console.log(`[Agent] Pre-join client ${requesterSocketId} to room ${room} (history resolve)`);
+
+        // 发起者即 owner：设置 role/sessionId/displayName 与 onlineParticipants 覆盖层
+        if (!isHistory && (clientSocket.data as { userId?: string }).userId === userId) {
+          const owner = await prisma.user.findUnique({ where: { id: userId } });
+          const ownerDisplay = owner ? (owner.username ?? owner.email.split('@')[0] ?? 'Owner') : 'Owner';
+          (clientSocket.data as { role?: string; sessionId?: string; displayName?: string }).role = 'owner';
+          (clientSocket.data as { sessionId?: string }).sessionId = session_id;
+          (clientSocket.data as { displayName?: string }).displayName = ownerDisplay;
+          onlineParticipants.set(requesterSocketId, { role: 'owner', userId, displayName: ownerDisplay });
+        }
       }
     }
 
@@ -333,11 +356,22 @@ export function handleAgentConnection(socket: AgentSocket) {
     }
   });
 
-  // Chat 模式：转发权限请求（Agent -> Client）
+  // Chat 模式：转发权限请求（Agent -> Client），按 approvalMode 仅发给有权审批的角色
   socket.on(SocketEvents.CHAT_PERMISSION_REQUEST, (data: ChatPermissionRequestEvent) => {
     const io = getIoInstance();
-    if (io) {
-      io.of(SocketNamespaces.CLIENT).to(`session:${data.session_id}`).emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
+    if (!io) return;
+    const clientNs = io.of(SocketNamespaces.CLIENT);
+    const room = clientNs.adapter.rooms.get(`session:${data.session_id}`);
+    if (!room) return;
+    const sessionInfo = sessions.get(data.session_id);
+    const mode: ApprovalMode = sessionInfo?.approvalMode ?? 'owner';
+    for (const sid of room) {
+      const s = clientNs.sockets.get(sid);
+      const online = onlineParticipants.get(sid);
+      const role: Role = online?.role ?? 'viewer';
+      if (canApprove(role, mode)) {
+        s?.emit(SocketEvents.CHAT_PERMISSION_REQUEST, data);
+      }
     }
   });
 

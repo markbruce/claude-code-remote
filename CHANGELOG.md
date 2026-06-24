@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added / 新增
+
+- **Session sharing** — owner can share an active session via a link; visitors view real-time conversation, tool calls, and output **without logging in** (Phase 1) ([#7](https://github.com/markbruce/claude-code-remote/issues/7))
+- **会话分享** — Owner 可通过链接分享进行中的会话，访客**无需登录**即可实时观看对话、工具调用与输出（Phase 1）
+- **Collaborative participation** — invite authenticated collaborators who can send messages (with per-message sender attribution) and approve tool permissions under an owner-configurable mode (`owner`-only / `any`-collaborator, first-approval-wins) (Phase 2) ([#7](https://github.com/markbruce/claude-code-remote/issues/7))
+- **协作参与** — 可邀请已认证的协作者发送消息（带发送者归属）并按 Owner 配置的策略（仅 Owner / 任意协作者，首次批准生效）审批工具权限（Phase 2）
+- **DB-backed role-tagged invite links** (viewer = anonymous, collaborator = login required) via new `SessionParticipant` + `SessionInvite` tables — invites and roles persist across server restarts ([#7](https://github.com/markbruce/claude-code-remote/issues/7))
+- **基于 DB 的角色邀请链接**（访客 = 匿名，协作者 = 需登录），新增 `SessionParticipant` + `SessionInvite` 表 — 邀请与角色在服务器重启后保留
+
+### Changed / 变更
+
+- Additive DB migration only (backward-compatible): adds `session_participants` and `session_invites` tables and an `approval_mode` column on `session_logs` (defaults to `'owner'`; existing rows backfilled, no data loss) ([#7](https://github.com/markbruce/claude-code-remote/issues/7))
+- 仅做加法的 DB 迁移（向后兼容）：新增 `session_participants`、`session_invites` 表及 `session_logs.approval_mode` 列（默认 `'owner'`，存量行回填，无数据丢失）
+
 ### Fixed / 修复
 
 - Agent now reconnects indefinitely after network outages — previously it gave up after 10 failed attempts (~50s) and left the machine permanently disconnected, requiring a manual restart or destructive rebind ([#22](https://github.com/markbruce/claude-code-remote/issues/22))
