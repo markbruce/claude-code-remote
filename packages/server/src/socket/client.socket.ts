@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import {
   SocketEvents,
   SocketNamespaces,
+  SESSION_BUFFER_SIZE,
   ERROR_MESSAGES,
   ScanProjectsRequest,
   StartSessionRequest,
@@ -531,6 +532,25 @@ export function handleClientConnection(socket: ClientSocket) {
       sender_name: online?.displayName ?? resolveDisplayName({ username: socket.data.username ?? null, email: socket.data.email ?? '' }),
     };
     emitToAgent(sessionInfo.machineId, SocketEvents.CHAT_SEND, enriched);
+
+    // Broadcast the user's message to the room with attribution. The agent does
+    // not echo user turns, so the server is the source of truth for display.
+    // Buffer it so collaborators/viewers joining later see it on replay.
+    const userMessage = {
+      session_id: data.session_id,
+      type: 'user' as const,
+      content: data.content,
+      timestamp: new Date(),
+      sender_id: online?.userId,
+      sender_name: online?.displayName ?? resolveDisplayName({ username: socket.data.username ?? null, email: socket.data.email ?? '' }),
+    };
+    const room = `session:${data.session_id}`;
+    const buffer = chatBuffers.get(data.session_id);
+    if (buffer) {
+      buffer.push(userMessage);
+      if (buffer.length > SESSION_BUFFER_SIZE) buffer.shift();
+    }
+    getIoInstance()?.of(SocketNamespaces.CLIENT).to(room).emit(SocketEvents.CHAT_MESSAGE, userMessage);
   });
 
   // Chat 模式：转发权限审批回答（Client -> Agent），first-approval-wins + 通知其他接收者清空 banner

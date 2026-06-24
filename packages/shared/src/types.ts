@@ -152,7 +152,7 @@ export interface SessionResizeEvent {
 
 export interface ChatMessageEvent {
   session_id: string;
-  type: 'text' | 'text_delta' | 'tool_use' | 'tool_result' | 'error' | 'complete';
+  type: 'text' | 'text_delta' | 'tool_use' | 'tool_result' | 'error' | 'complete' | 'user';
   content?: string;
   toolName?: string;
   toolInput?: string;
