@@ -134,19 +134,25 @@ const MarkdownContent: React.FC<{ content: string }> = memo(({ content }) => {
 MarkdownContent.displayName = 'MarkdownContent';
 
 /* ------------------------------------------------------------------ */
-/*  User message — right-aligned bubble                                */
+/*  User message — right-aligned bubble with sender attribution        */
 /* ------------------------------------------------------------------ */
-const UserMessage: React.FC<{ content: string; timestamp: Date }> = ({ content, timestamp }) => {
+const UserMessage: React.FC<{ content: string; timestamp: Date; senderName?: string }> = ({ content, timestamp, senderName }) => {
   const time = useMemo(() => new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), [timestamp]);
+  const initial = (senderName?.trim()?.[0] ?? 'U').toUpperCase();
 
   return (
     <div className="flex flex-row-reverse items-start gap-2.5">
       {/* Avatar */}
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-medium text-white">
-        U
+      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-medium text-white" title={senderName}>
+        {initial}
       </div>
       {/* Bubble */}
       <div className="group flex max-w-[75%] flex-col items-end">
+        {senderName && (
+          <span className="mb-1 mr-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+            {senderName}
+          </span>
+        )}
         <div className="rounded-2xl rounded-tr-md bg-blue-600 px-4 py-2.5 text-[14px] leading-6 text-white whitespace-pre-wrap">
           {content}
         </div>
@@ -593,7 +599,7 @@ export const MessageComponent: React.FC<MessageComponentProps> = memo(({ message
 
   switch (message.type) {
     case 'user':
-      return <UserMessage content={message.content} timestamp={message.timestamp} />;
+      return <UserMessage content={message.content} timestamp={message.timestamp} senderName={message.senderName} />;
     case 'assistant':
       return (
         <AssistantMessage

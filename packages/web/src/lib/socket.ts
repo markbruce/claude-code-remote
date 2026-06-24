@@ -178,6 +178,21 @@ class SocketManager {
   }
 
   /**
+   * 以协作者身份连接（需要 JWT 登录，通过 shareToken 加入分享会话）
+   */
+  connectAsCollaborator(config: SocketConfig, shareToken: string): Promise<Socket> {
+    return new Promise((resolve, reject) => {
+      this.connect(config)
+        .then((socket) => {
+          // 加入分享的会话（与 connectAsViewer 一致的事件名）
+          this.socket?.emit(SocketEvents.JOIN_SHARED_SESSION, { shareToken });
+          resolve(socket);
+        })
+        .catch((err: Error) => reject(err));
+    });
+  }
+
+  /**
    * 注册事件处理器
    */
   private registerEventHandlers(): void {
@@ -310,6 +325,23 @@ class SocketManager {
     });
     this.socket.on(SocketEvents.SHARED_SESSION_VIEWERS, (data: unknown) => {
       this.notifyListeners(SocketEvents.SHARED_SESSION_VIEWERS, data);
+    });
+
+    // 会话协作事件（Phase 2）
+    this.socket.on(SocketEvents.INVITE_CREATED, (data: unknown) => {
+      this.notifyListeners(SocketEvents.INVITE_CREATED, data);
+    });
+    this.socket.on(SocketEvents.PARTICIPANTS, (data: unknown) => {
+      this.notifyListeners(SocketEvents.PARTICIPANTS, data);
+    });
+    this.socket.on(SocketEvents.PARTICIPANT_REMOVED, (data: unknown) => {
+      this.notifyListeners(SocketEvents.PARTICIPANT_REMOVED, data);
+    });
+    this.socket.on(SocketEvents.APPROVAL_MODE_CHANGED, (data: unknown) => {
+      this.notifyListeners(SocketEvents.APPROVAL_MODE_CHANGED, data);
+    });
+    this.socket.on(SocketEvents.CHAT_PERMISSION_RESOLVED, (data: unknown) => {
+      this.notifyListeners(SocketEvents.CHAT_PERMISSION_RESOLVED, data);
     });
   }
 

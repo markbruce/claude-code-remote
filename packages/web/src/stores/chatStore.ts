@@ -14,6 +14,8 @@ export interface ChatMessage {
   toolInput?: string;
   toolId?: string;
   toolResult?: { content: string; isError: boolean };
+  senderId?: string;
+  senderName?: string;
 }
 
 export interface ChatPermission {
@@ -79,13 +81,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentProjectPath: null,
 
   sendMessage: (sessionId: string, content: string, attachments?: AttachmentRef[]) => {
-    const userMsg: ChatMessage = {
-      id: genId(),
-      type: 'user',
-      content,
-      timestamp: new Date(),
-    };
-    set((s) => ({ messages: [...s.messages, userMsg], isGenerating: true }));
+    // The server broadcasts the user's message back as a CHAT_MESSAGE with
+    // type:'user' + sender attribution; do not synthesize it locally (the
+    // owner would otherwise see their message twice).
+    set({ isGenerating: true });
     socketManager.sendChatMessage(sessionId, content, attachments);
   },
 
@@ -104,6 +103,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     switch (event.type) {
+      case 'user': {
+        // Server-broadcast user message (with sender attribution). The owner
+        // no longer synthesizes their own message locally, so all participants
+        // receive user messages through this path.
+        const userMsg: ChatMessage = {
+          id: genId(),
+          type: 'user',
+          content: event.content ?? '',
+          timestamp: new Date(event.timestamp),
+          senderId: event.sender_id,
+          senderName: event.sender_name,
+        };
+        set({ messages: [...state.messages, userMsg] });
+        break;
+      }
+
       case 'text': {
         const msg: ChatMessage = {
           id: genId(),
