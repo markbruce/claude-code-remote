@@ -603,7 +603,12 @@ export function handleClientConnection(socket: ClientSocket) {
 
   // Owner 发起分享（Phase 2：创建 DB viewer 邀请，返回 token）
   socket.on(SocketEvents.SHARE_SESSION, async (data: { session_id: string }) => {
-    if (onlineParticipants.get(socket.id)?.role !== 'owner') return;
+    const requesterRole = onlineParticipants.get(socket.id)?.role;
+    if (requesterRole !== 'owner') {
+      // 不再静默失败——记录为何拒绝，便于排查 owner overlay 未设置的路径（见 #27 Bug 1）
+      console.warn(`[Client] SHARE_SESSION rejected: socket ${socket.id} role=${requesterRole ?? 'none'} (expected owner) for session ${data.session_id}`);
+      return;
+    }
     const invite = await prisma.sessionInvite.create({
       data: {
         session_id: data.session_id,
@@ -799,6 +804,8 @@ export function handleClientConnection(socket: ClientSocket) {
 
       // 回放 chatBuffer 给访客/协作者
       const buffer = chatBuffers.get(sessionId);
+      // [诊断 #27 Bug 2] join 时该会话的缓冲消息数；为 0 说明 owner 还没发过消息或缓冲未填充
+      console.log(`[Client] Shared join ${sessionId}: chatBuffer has ${buffer?.length ?? 0} msgs to replay`);
       if (buffer && buffer.length > 0) {
         for (const msg of buffer) {
           socket.emit(SocketEvents.CHAT_MESSAGE, msg);

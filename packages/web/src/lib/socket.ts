@@ -251,6 +251,8 @@ class SocketManager {
 
     // Chat 模式事件
     this.socket.on(SocketEvents.CHAT_MESSAGE, (data: unknown) => {
+      // [诊断 #27 Bug 2] 浏览器侧是否收到 CHAT_MESSAGE（区分服务端未送达 vs 前端未渲染）
+      console.log('[Socket] CHAT_MESSAGE recv:', (data as { type?: string; session_id?: string }).type, (data as { session_id?: string }).session_id);
       this.notifyListeners(SocketEvents.CHAT_MESSAGE, data);
     });
 

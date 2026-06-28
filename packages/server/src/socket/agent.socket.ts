@@ -253,21 +253,25 @@ export function handleAgentConnection(socket: AgentSocket) {
       const io = getIoInstance();
       const clientSocket = io?.of(SocketNamespaces.CLIENT).sockets.get(requesterSocketId);
       const room = `session:${session_id}`;
+
+      // 1) 发起者加入会话房间（若尚未加入）
       if (clientSocket && !clientSocket.rooms.has(room)) {
         clientSocket.join(room);
         const stored = sessions.get(session_id);
         if (stored) stored.clientsCount++;
-        console.log(`[Agent] Pre-join client ${requesterSocketId} to room ${room} (history resolve)`);
+        console.log(`[Agent] Pre-join client ${requesterSocketId} to room ${room}`);
+      }
 
-        // 发起者即 owner：设置 role/sessionId/displayName 与 onlineParticipants 覆盖层
-        if (!isHistory && (clientSocket.data as { userId?: string }).userId === userId) {
-          const owner = await prisma.user.findUnique({ where: { id: userId } });
-          const ownerDisplay = owner ? (owner.username ?? owner.email.split('@')[0] ?? 'Owner') : 'Owner';
-          (clientSocket.data as { role?: string; sessionId?: string; displayName?: string }).role = 'owner';
-          (clientSocket.data as { sessionId?: string }).sessionId = session_id;
-          (clientSocket.data as { displayName?: string }).displayName = ownerDisplay;
-          onlineParticipants.set(requesterSocketId, { role: 'owner', userId, displayName: ownerDisplay });
-        }
+      // 2) 发起者即 owner：无条件设置 role/sessionId/displayName 与 onlineParticipants 覆盖层。
+      //    不再依赖 !isHistory 或「是否刚加入房间」——恢复会话（isHistory）时也必须设，
+      //    否则 SHARE_SESSION 等基于 overlay 的守卫会静默失败（见 #27 Bug 1）。
+      if (clientSocket && (clientSocket.data as { userId?: string }).userId === userId) {
+        const owner = await prisma.user.findUnique({ where: { id: userId } });
+        const ownerDisplay = owner ? (owner.username ?? owner.email.split('@')[0] ?? 'Owner') : 'Owner';
+        (clientSocket.data as { role?: string; sessionId?: string; displayName?: string }).role = 'owner';
+        (clientSocket.data as { sessionId?: string }).sessionId = session_id;
+        (clientSocket.data as { displayName?: string }).displayName = ownerDisplay;
+        onlineParticipants.set(requesterSocketId, { role: 'owner', userId, displayName: ownerDisplay });
       }
     }
 
@@ -352,7 +356,11 @@ export function handleAgentConnection(socket: AgentSocket) {
 
     const io = getIoInstance();
     if (io) {
-      io.of(SocketNamespaces.CLIENT).to(`session:${data.session_id}`).emit(SocketEvents.CHAT_MESSAGE, data);
+      const clientNs = io.of(SocketNamespaces.CLIENT);
+      const recipients = clientNs.adapter.rooms.get(`session:${data.session_id}`)?.size ?? 0;
+      // [诊断 #27 Bug 2] 转发时房间内接收者数量；若访客已加入应为 ≥2（owner + viewer）
+      console.log(`[Agent] CHAT_MESSAGE fwd: session ${data.session_id} type=${(data as { type?: string }).type} recipients=${recipients}`);
+      clientNs.to(`session:${data.session_id}`).emit(SocketEvents.CHAT_MESSAGE, data);
     }
   });
 
