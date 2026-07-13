@@ -140,6 +140,11 @@ class SocketManager {
         reconnectionDelayMax: 5000,
       });
 
+      // 关键修复：在连接成功之前就注册事件监听器
+      // 这样当 connect 事件触发并立即发送 JOIN_SHARED_SESSION 时，
+      // 服务器的回放消息能够被正确接收
+      this.registerEventHandlers();
+
       this.socket.on('connect', () => {
         console.log('[Socket] Viewer connected');
         useSocketStore.setState({ isConnected: true, isConnecting: false });
@@ -172,8 +177,6 @@ class SocketManager {
         useSocketStore.setState({ isConnected: false, isConnecting: false });
         this.notifyListeners('disconnect', { reason });
       });
-
-      this.registerEventHandlers();
     });
   }
 

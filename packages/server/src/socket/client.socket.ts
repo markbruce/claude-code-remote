@@ -609,19 +609,47 @@ export function handleClientConnection(socket: ClientSocket) {
       console.warn(`[Client] SHARE_SESSION rejected: socket ${socket.id} role=${requesterRole ?? 'none'} (expected owner) for session ${data.session_id}`);
       return;
     }
-    const invite = await prisma.sessionInvite.create({
-      data: {
-        session_id: data.session_id,
-        token: crypto.randomUUID(),
-        role: 'viewer',
-        created_by: socket.data.userId!,
-      },
-    });
-    socket.emit(SocketEvents.SHARE_SESSION, {
-      session_id: data.session_id,
-      shareToken: invite.token,
-    });
-    console.log(`[Client] Share enabled (DB invite) for session ${data.session_id}`);
+    const sessionId = data.session_id;
+
+    try {
+      // Check if SessionLog exists (may be missing for history sessions restored from agent)
+      let sessionLog = await prisma.sessionLog.findUnique({ where: { id: sessionId } });
+      if (!sessionLog) {
+        // Get session info from memory to create SessionLog
+        const sessionInfo = sessions.get(sessionId);
+        if (sessionInfo) {
+          sessionLog = await prisma.sessionLog.create({
+            data: {
+              id: sessionId,
+              machine_id: sessionInfo.machineId,
+              started_at: new Date(),
+            },
+          });
+          console.log(`[Client] SHARE_SESSION: created missing SessionLog for session ${sessionId}`);
+        }
+      }
+
+      if (!sessionLog) {
+        console.warn(`[Client] SHARE_SESSION: session ${sessionId} not found in DB or memory`);
+        return;
+      }
+
+      const invite = await prisma.sessionInvite.create({
+        data: {
+          session_id: sessionId,
+          token: crypto.randomUUID(),
+          role: 'viewer',
+          created_by: socket.data.userId!,
+        },
+      });
+      socket.emit(SocketEvents.SHARE_SESSION, {
+        session_id: sessionId,
+        shareToken: invite.token,
+      });
+      console.log(`[Client] Share enabled (DB invite) for session ${sessionId}`);
+    } catch (error) {
+      console.error(`[Client] SHARE_SESSION error for session ${sessionId}:`, error);
+    }
   });
 
   // Owner 停止分享（删除 viewer 邀请并踢出在线 viewer）
@@ -806,24 +834,26 @@ export function handleClientConnection(socket: ClientSocket) {
       const buffer = chatBuffers.get(sessionId);
       // [诊断 #27 Bug 2] join 时该会话的缓冲消息数；为 0 说明 owner 还没发过消息或缓冲未填充
       console.log(`[Client] Shared join ${sessionId}: chatBuffer has ${buffer?.length ?? 0} msgs to replay`);
+      
+      // [诊断 #27 Bug 2] 记录房间成员
+      const debugIo = getIoInstance();
+      if (debugIo) {
+        const clientNs = debugIo.of(SocketNamespaces.CLIENT);
+        const roomMembers = clientNs.adapter.rooms.get(room);
+        console.log(`[Client] Room ${room} members: ${roomMembers?.size ?? 0} sockets`, roomMembers ? Array.from(roomMembers) : []);
+      }
+      
       if (buffer && buffer.length > 0) {
         for (const msg of buffer) {
           socket.emit(SocketEvents.CHAT_MESSAGE, msg);
         }
       }
 
-      // 广播观众数量给 room 内所有人
+      // 广播观众数量给 room 内所有人（使用 onlineParticipants Map，与 disconnect 事件保持一致）
       const io = getIoInstance();
-      let viewersCount = 0;
-      if (io) {
-        const socketsInRoom = io.sockets.adapter.rooms.get(room);
-        if (socketsInRoom) {
-          for (const sid of socketsInRoom) {
-            const s = io.sockets.sockets.get(sid);
-            if (s?.data?.isViewer) viewersCount++;
-          }
-        }
-      }
+      const viewersCount = [...onlineParticipants.values()].filter(
+        (o) => o.role === 'viewer',
+      ).length;
       io?.to(room).emit(SocketEvents.SHARED_SESSION_VIEWERS, {
         sessionId,
         viewersCount,
